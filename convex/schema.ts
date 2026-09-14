@@ -28,6 +28,7 @@ export default defineSchema({
     key: v.string(),
     label: v.string(),
     status: requirementStatus,
+    isPriority: v.optional(v.boolean()),
     answer: v.optional(v.string()),
     evidence: v.optional(v.string()),
     sourceUrl: v.optional(v.string()),
@@ -40,6 +41,17 @@ export default defineSchema({
     inboxId: v.string(),
     threadId: v.optional(v.string()),
     outboundId: v.optional(v.string()),
+    messageId: v.optional(v.string()),
+    questions: v.optional(
+      v.array(
+        v.object({
+          key: v.string(),
+          label: v.string(),
+          question: v.string(),
+        }),
+      ),
+    ),
+    replyText: v.optional(v.string()),
     status: v.union(
       v.literal('draft'),
       v.literal('pending'),
@@ -52,4 +64,17 @@ export default defineSchema({
   })
     .index('by_caseId', ['caseId'])
     .index('by_threadId', ['threadId']),
+
+  emailEvents: defineTable({
+    eventId: v.string(),
+    eventType: v.string(),
+    receivedAt: v.number(),
+  }).index('by_eventId', ['eventId']),
+
+  settings: defineTable({
+    key: v.string(),
+    value: v.string(),
+    secondary: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index('by_key', ['key']),
 })

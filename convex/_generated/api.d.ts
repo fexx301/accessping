@@ -9,6 +9,9 @@
  */
 
 import type * as cases from "../cases.js";
+import type * as emailCallbacks from "../emailCallbacks.js";
+import type * as http from "../http.js";
+import type * as outreach from "../outreach.js";
 import type * as research from "../research.js";
 
 import type {
@@ -19,6 +22,9 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   cases: typeof cases;
+  emailCallbacks: typeof emailCallbacks;
+  http: typeof http;
+  outreach: typeof outreach;
   research: typeof research;
 }>;
 

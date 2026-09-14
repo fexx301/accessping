@@ -10,6 +10,11 @@ const app = defineApp({
     OPENAI_API_KEY: v.string(),
     OPENAI_MODEL: v.optional(v.string()),
     OPENAI_BASE_URL: v.optional(v.string()),
+    AGENTMAIL_API_KEY: v.string(),
+    AGENTMAIL_BASE_URL: v.optional(v.string()),
+    AGENTMAIL_WEBHOOK_SECRET: v.optional(v.string()),
+    AGENTMAIL_INBOX_ID: v.optional(v.string()),
+    AGENTMAIL_INBOX_EMAIL: v.optional(v.string()),
   },
 })
 

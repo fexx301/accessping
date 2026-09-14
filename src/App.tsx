@@ -20,6 +20,7 @@ type DisplayRequirement = {
   key: string
   label: string
   status: RequirementStatus
+  isPriority?: boolean
   answer?: string
   evidence?: string
   sourceUrl?: string
@@ -111,10 +112,15 @@ function App() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [isStarting, setIsStarting] = useState(false)
   const [questionsOpen, setQuestionsOpen] = useState(previewMode)
+  const [recipientEmail, setRecipientEmail] = useState('')
+  const [sendError, setSendError] = useState<string | null>(null)
+  const [isSending, setIsSending] = useState(false)
   const reportStatusRef = useRef<HTMLDivElement>(null)
 
   const createCase = useMutation(api.cases.create)
+  const setPriority = useMutation(api.cases.setPriority)
   const analyzeVenue = useAction(api.research.analyzeVenue)
+  const sendInquiry = useAction(api.outreach.sendInquiry)
   const bundle = useQuery(api.cases.getBundle, caseId ? { caseId } : 'skip')
 
   const requirements: DisplayRequirement[] = previewMode
@@ -147,11 +153,20 @@ function App() {
         : null
 
   function toggleNeed(key: string) {
+    const nextIsPriority = !selectedNeeds.includes(key)
+
     setSelectedNeeds((current) =>
-      current.includes(key)
-        ? current.filter((item) => item !== key)
-        : [...current, key],
+      nextIsPriority ? [...current, key] : current.filter((item) => item !== key),
     )
+
+    if (caseId && !previewMode) {
+      void setPriority({ caseId, key, isPriority: nextIsPriority }).catch((error: unknown) => {
+        console.error('Could not save priority', error)
+        setSelectedNeeds((current) =>
+          nextIsPriority ? current.filter((item) => item !== key) : [...current, key],
+        )
+      })
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -166,7 +181,7 @@ function App() {
     setIsStarting(true)
 
     try {
-      const nextCaseId = await createCase({ url: normalizedUrl })
+      const nextCaseId = await createCase({ url: normalizedUrl, priorityKeys: selectedNeeds })
       setCaseId(nextCaseId)
 
       requestAnimationFrame(() => {
@@ -181,6 +196,21 @@ function App() {
       setSubmitError(error instanceof Error ? error.message : 'Could not start the access check.')
     } finally {
       setIsStarting(false)
+    }
+  }
+
+  async function handleSendInquiry(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!caseId || previewMode || isSending) return
+
+    setSendError(null)
+    setIsSending(true)
+    try {
+      await sendInquiry({ caseId, recipient: recipientEmail.trim() })
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : 'Could not send the venue questions.')
+    } finally {
+      setIsSending(false)
     }
   }
 
@@ -227,6 +257,9 @@ function App() {
     : bundle
     ? new Date(bundle.case.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : null
+  const outreachStatus = previewMode ? null : bundle?.outreach?.status
+  const outreachLocked =
+    outreachStatus === 'pending' || outreachStatus === 'sent' || outreachStatus === 'replied'
 
   return (
     <main className="app-shell">
@@ -471,7 +504,50 @@ function App() {
                       : requirements.filter((item) => item.status === 'unknown')
                     ).map((item) => <li key={item._id}>{item.label}</li>)}
                   </ul>
-                  <p className="question-preview__note">Review only. This draft is never sent automatically.</p>
+                  <p className="question-preview__note">
+                    Review only. Nothing is sent until you enter the venue email and press Send questions.
+                  </p>
+
+                  {!previewMode && (
+                    <form className="outreach-form" onSubmit={handleSendInquiry}>
+                      <label htmlFor="venue-email">Venue email</label>
+                      <input
+                        id="venue-email"
+                        type="email"
+                        inputMode="email"
+                        autoComplete="email"
+                        placeholder="access@venue.example"
+                        value={recipientEmail}
+                        onChange={(event) => setRecipientEmail(event.target.value)}
+                        disabled={isSending || outreachLocked}
+                        required
+                      />
+                      <button
+                        className="secondary-action outreach-send"
+                        type="submit"
+                        disabled={isSending || outreachLocked || recipientEmail.trim().length === 0}
+                      >
+                        {isSending
+                          ? 'Sending…'
+                          : outreachStatus === 'replied'
+                            ? 'Venue replied'
+                            : outreachLocked
+                              ? 'Questions sent'
+                              : 'Send questions'}
+                      </button>
+
+                      {sendError && <p className="outreach-message outreach-message--error">{sendError}</p>}
+                      {bundle?.outreach && !sendError && (
+                        <p className={`outreach-message outreach-message--${bundle.outreach.status}`}>
+                          {bundle.outreach.status === 'replied'
+                            ? 'Venue reply received. Any explicitly answered details update in the ledger above.'
+                            : bundle.outreach.status === 'failed'
+                              ? 'Delivery failed. Check the address and try again.'
+                              : `Sent to ${bundle.outreach.recipient}. Waiting for the venue reply.`}
+                        </p>
+                      )}
+                    </form>
+                  )}
                 </div>
               )}
             </aside>

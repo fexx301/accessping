@@ -11,8 +11,8 @@ const requirementTemplate = [
 ] as const
 
 export const create = mutation({
-  args: { url: v.string() },
-  handler: async (ctx, { url }) => {
+  args: { url: v.string(), priorityKeys: v.array(v.string()) },
+  handler: async (ctx, { url, priorityKeys }) => {
     const now = Date.now()
     const caseId = await ctx.db.insert('cases', {
       url,
@@ -27,11 +27,36 @@ export const create = mutation({
         key,
         label,
         status: 'unknown',
+        isPriority: priorityKeys.includes(key),
         updatedAt: now,
       })
     }
 
     return caseId
+  },
+})
+
+export const setPriority = mutation({
+  args: {
+    caseId: v.id('cases'),
+    key: v.string(),
+    isPriority: v.boolean(),
+  },
+  handler: async (ctx, { caseId, key, isPriority }) => {
+    const requirements = await ctx.db
+      .query('requirements')
+      .withIndex('by_caseId', (q) => q.eq('caseId', caseId))
+      .take(20)
+
+    const requirement = requirements.find((item) => item.key === key)
+    if (!requirement) throw new Error('Requirement not found for this case.')
+
+    await ctx.db.patch(requirement._id, {
+      isPriority,
+      updatedAt: Date.now(),
+    })
+
+    return null
   },
 })
 
