@@ -1,22 +1,66 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
+
 :root {
-  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #d7ddd9;
-  background: #080b0a;
+  --color-paper: oklch(98.2% 0.012 62);
+  --color-paper-2: oklch(95.9% 0.016 62);
+  --color-ink: oklch(23% 0.025 35);
+  --color-ink-2: oklch(36% 0.022 35);
+  --color-muted: oklch(50% 0.02 38);
+  --color-rule: oklch(88% 0.018 52);
+  --color-rule-strong: oklch(78% 0.024 50);
+  --color-accent: oklch(56% 0.18 31);
+  --color-accent-dark: oklch(48% 0.17 31);
+  --color-accent-ink: oklch(98.5% 0.01 62);
+  --color-focus: oklch(56% 0.18 31);
+  --color-error: oklch(48% 0.18 24);
+  --color-success-soft: oklch(93% 0.045 148);
+  --color-success-rule: oklch(73% 0.1 148);
+  --color-success-ink: oklch(34% 0.09 148);
+  --color-warning-soft: oklch(94% 0.055 82);
+  --color-warning-rule: oklch(76% 0.11 82);
+  --color-warning-ink: oklch(38% 0.09 72);
+  --color-on-dark-muted: oklch(80% 0.014 52);
+
+  --font-display: 'Manrope', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-body: 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  --space-3xs: 0.25rem;
+  --space-2xs: 0.5rem;
+  --space-xs: 0.75rem;
+  --space-sm: 1rem;
+  --space-md: 1.5rem;
+  --space-lg: 2rem;
+  --space-xl: 3rem;
+  --space-2xl: 4.5rem;
+
+  --text-2xs: 0.72rem;
+  --text-xs: 0.8rem;
+  --text-sm: 0.92rem;
+  --text-md: 1.05rem;
+  --text-lg: 1.3rem;
+  --text-xl: 1.75rem;
+
+  --tracking-display: -0.055em;
+  --tracking-heading: -0.035em;
+  --tracking-tight: -0.02em;
+  --tracking-label: 0.08em;
+  --leading-body: 1.65;
+
+  --layout-max: 92rem;
+  --topbar-height: 4.25rem;
+  --control-height: 3rem;
+  --radius-control: 0.45rem;
+  --radius-status: 0.35rem;
+  --radius-panel: 0.8rem;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 160ms;
+
+  font-family: var(--font-body);
+  color: var(--color-ink-2);
+  background: var(--color-paper-2);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --bg: #080b0a;
-  --panel: #0f1412;
-  --input-bg: #0a0e0c;
-  --border: #202824;
-  --border-strong: #303b36;
-  --text-strong: #f3f7f4;
-  --text-muted: #9aa8a0;
-  --text-dim: #6e7c74;
-  --accent: #74f2b8;
-  --accent-soft: #9bf6cf;
-  --warning: #ffc76b;
-  --shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
 }
 
 * {
@@ -24,17 +68,19 @@
 }
 
 html {
-  background: var(--bg);
+  overflow-x: clip;
+  background: var(--color-paper-2);
   scroll-behavior: smooth;
 }
 
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100vh;
-  background:
-    radial-gradient(circle at 74% -10%, rgba(116, 242, 184, 0.08), transparent 28%),
-    var(--bg);
+  min-height: 100dvh;
+  overflow-x: clip;
+  background: var(--color-paper-2);
+  color: var(--color-ink-2);
+  font-family: var(--font-body);
 }
 
 button,
@@ -43,6 +89,6 @@ input {
 }
 
 ::selection {
-  color: #07120f;
-  background: var(--accent);
+  color: var(--color-accent-ink);
+  background: var(--color-accent);
 }

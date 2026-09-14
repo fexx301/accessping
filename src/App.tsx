@@ -11,14 +11,23 @@ type RequirementStatus =
   | 'conflicting'
 
 const statusCopy: Record<RequirementStatus, string> = {
-  confirmed_web: 'Confirmed by source',
-  confirmed_venue: 'Confirmed by venue',
-  unknown: 'Unknown',
-  conflicting: 'Conflicting information',
+  confirmed_web: 'Source confirmed',
+  confirmed_venue: 'Venue confirmed',
+  unknown: 'Not verified',
+  conflicting: 'Conflicting sources',
+}
+
+const statusGlyph: Record<RequirementStatus, string> = {
+  confirmed_web: '✓',
+  confirmed_venue: '✓',
+  unknown: '—',
+  conflicting: '!',
 }
 
 function App() {
   const [url, setUrl] = useState('')
+  const [urlTouched, setUrlTouched] = useState(false)
+  const [urlError, setUrlError] = useState<string | null>(null)
   const [caseId, setCaseId] = useState<Id<'cases'> | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [isStarting, setIsStarting] = useState(false)
@@ -29,11 +38,32 @@ function App() {
 
   const requirements = bundle?.requirements ?? []
   const unknownCount = requirements.filter((item) => item.status === 'unknown').length
+  const confirmedCount = requirements.filter(
+    (item) => item.status === 'confirmed_web' || item.status === 'confirmed_venue',
+  ).length
+  const conflictingCount = requirements.filter((item) => item.status === 'conflicting').length
+
+  function validateVenueUrl(value: string) {
+    if (!value.trim()) return 'Add a venue or event URL to continue.'
+
+    try {
+      const parsed = new URL(value)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return 'Use a full http:// or https:// URL.'
+      }
+      return null
+    } catch {
+      return 'Enter a complete URL, for example https://venue.example/event.'
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const nextUrl = url.trim()
-    if (!nextUrl || isStarting) return
+    const nextUrlError = validateVenueUrl(nextUrl)
+    setUrlTouched(true)
+    setUrlError(nextUrlError)
+    if (nextUrlError || isStarting) return
 
     setSubmitError(null)
     setIsStarting(true)
@@ -64,99 +94,171 @@ function App() {
           : 'Research failed'
 
   return (
-    <main className="shell">
-      <nav className="nav">
+    <main className="app-shell" id="top">
+      <header className="topbar">
         <a className="brand" href="#top" aria-label="AccessPing home">
-          <span className="brand-mark" aria-hidden="true">AP</span>
+          <span className="brand-mark" aria-hidden="true">A</span>
           <span>AccessPing</span>
         </a>
-        <span className="build-badge">Hackathon build</span>
-      </nav>
+        <p className="product-note">Evidence-first venue accessibility checks</p>
+      </header>
 
-      <section className="hero" id="top">
-        <div className="eyebrow">Know before you go</div>
-        <h1>Turn missing accessibility details into answers.</h1>
-        <p className="hero-copy">
-          Paste a venue or event page. AccessPing finds what is actually confirmed,
-          leaves unsupported claims unknown, and can ask the venue for the rest.
-        </p>
+      <div className="workbench">
+        <aside className="control-rail" aria-label="Start an accessibility check">
+          <div className="control-rail__intro">
+            <h1>Know what is confirmed before you arrive.</h1>
+            <p>
+              Paste a venue or event page. AccessPing separates published evidence from missing
+              information, then prepares the unanswered questions for the venue.
+            </p>
+          </div>
 
-        <form className="url-form" onSubmit={handleSubmit}>
-          <label htmlFor="venue-url">Venue or event URL</label>
-          <div className="url-row">
+          <form className="venue-form" onSubmit={handleSubmit} noValidate>
+            <label htmlFor="venue-url">Venue or event URL</label>
             <input
               id="venue-url"
               type="url"
-              placeholder="https://example.com/event"
+              inputMode="url"
+              autoComplete="url"
+              placeholder="https://venue.example/event"
               value={url}
-              onChange={(event) => setUrl(event.target.value)}
+              onChange={(event) => {
+                const nextValue = event.target.value
+                setUrl(nextValue)
+                if (urlTouched) setUrlError(validateVenueUrl(nextValue))
+                if (submitError) setSubmitError(null)
+              }}
+              onBlur={() => {
+                setUrlTouched(true)
+                setUrlError(validateVenueUrl(url))
+              }}
+              aria-describedby="venue-url-help"
+              aria-invalid={urlError || submitError ? true : undefined}
+              aria-required="true"
               required
             />
-            <button type="submit" disabled={isStarting}>
-              {isStarting ? 'Starting…' : 'Check access'}
-            </button>
-          </div>
-          <p className="form-note">
-            No accessibility claim is marked confirmed without source evidence.
-          </p>
-          {submitError && <p className="error-message">{submitError}</p>}
-        </form>
-      </section>
-
-      <section className="workspace" aria-live="polite">
-        <div className="workspace-header">
-          <div>
-            <p className="section-kicker">Access checklist</p>
-            <h2>{statusHeadline}</h2>
-            <p className="workspace-copy">
-              {bundle?.case.url ?? 'Your source-backed results will appear here after the first analysis.'}
-            </p>
-            {bundle?.case.error && <p className="error-message">{bundle.case.error}</p>}
-          </div>
-          {bundle && <div className="unknown-pill">{unknownCount} unknown</div>}
-        </div>
-
-        <div className="requirements-grid">
-          {requirements.length === 0 ? (
-            <div className="empty-state">
-              <p>Paste a venue or event URL to create the first six-field access check.</p>
+            <div className="form-helper" id="venue-url-help">
+              {urlError ?? submitError ?? 'Published evidence is kept separate from assumptions.'}
             </div>
-          ) : (
-            requirements.map((item) => (
-              <article className="requirement-card" key={item._id}>
-                <div className={`status-dot status-${item.status}`} aria-hidden="true" />
-                <div>
-                  <h3>{item.label}</h3>
-                  <p className={`status-label status-text-${item.status}`}>
-                    {statusCopy[item.status]}
-                  </p>
-                  {item.answer && <p className="answer">{item.answer}</p>}
-                  {item.evidence && <p className="evidence">“{item.evidence}”</p>}
-                  {item.sourceUrl && (
-                    <a href={item.sourceUrl} target="_blank" rel="noreferrer">
-                      View source
-                    </a>
-                  )}
-                </div>
-              </article>
-            ))
-          )}
-        </div>
+            <button className="primary-action" type="submit" disabled={isStarting}>
+              {isStarting ? 'Checking…' : 'Check this venue'}
+            </button>
+          </form>
 
-        <div className="outreach-panel">
-          <div>
-            <p className="section-kicker">Next step</p>
-            <h2>Ask only what the web could not answer.</h2>
+          <div className="trust-note">
+            <span className="trust-note__mark" aria-hidden="true">↳</span>
             <p>
-              After the research spike passes, the next vertical slice drafts one targeted
-              AgentMail message from the remaining unknown fields and requires approval before sending.
+              If a source does not say it, AccessPing leaves it unverified instead of guessing.
             </p>
           </div>
-          <button type="button" disabled={caseStatus !== 'ready' || unknownCount === 0}>
-            Ask venue
-          </button>
-        </div>
-      </section>
+        </aside>
+
+        <section className="report-panel" aria-live="polite" aria-busy={caseStatus === 'researching'}>
+          <header className="report-head">
+            <div className="report-head__copy">
+              <p className="report-label">Access report</p>
+              <h2>{statusHeadline}</h2>
+              <p className="report-url">
+                {bundle?.case.url ?? 'Run a check to build a source-backed accessibility report.'}
+              </p>
+              {bundle?.case.error && <p className="error-message">{bundle.case.error}</p>}
+            </div>
+
+            {bundle ? (
+              <dl className="report-summary" aria-label="Report summary">
+                <div>
+                  <dt>Confirmed</dt>
+                  <dd>{confirmedCount}</dd>
+                </div>
+                <div>
+                  <dt>Unverified</dt>
+                  <dd>{unknownCount}</dd>
+                </div>
+                <div>
+                  <dt>Conflicts</dt>
+                  <dd>{conflictingCount}</dd>
+                </div>
+              </dl>
+            ) : null}
+          </header>
+
+          <div className="report-body">
+            {requirements.length === 0 ? (
+              <div className="empty-report">
+                <div className="empty-report__index" aria-hidden="true">01</div>
+                <div>
+                  <h3>No report yet</h3>
+                  <p>
+                    Add a venue URL. The first pass checks six practical access details and keeps a
+                    source trail for anything marked confirmed.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <ol className="requirement-list">
+                {requirements.map((item, index) => (
+                  <li className="requirement-row" key={item._id}>
+                    <div className="requirement-row__index" aria-hidden="true">
+                      {String(index + 1).padStart(2, '0')}
+                    </div>
+                    <div className="requirement-row__main">
+                      <div className="requirement-row__titleline">
+                        <h3>{item.label}</h3>
+                        <span className={`status-chip status-chip--${item.status}`}>
+                          <span aria-hidden="true">{statusGlyph[item.status]}</span>
+                          {statusCopy[item.status]}
+                        </span>
+                      </div>
+                      {item.answer && <p className="answer">{item.answer}</p>}
+                      {item.evidence && (
+                        <blockquote className="evidence">
+                          <p>{item.evidence}</p>
+                        </blockquote>
+                      )}
+                    </div>
+                    <div className="requirement-row__source">
+                      {item.sourceUrl ? (
+                        <a href={item.sourceUrl} target="_blank" rel="noreferrer">
+                          Open source ↗
+                        </a>
+                      ) : (
+                        <span>No source yet</span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+
+          <footer className="report-action">
+            <div>
+              <h3>Still missing something?</h3>
+              <p>
+                The next step will draft one focused message containing only the details the web
+                could not verify.
+              </p>
+            </div>
+            <div className="report-action__controls">
+              <button
+                className="secondary-action"
+                type="button"
+                disabled={caseStatus !== 'ready' || unknownCount === 0}
+                aria-describedby="ask-venue-state"
+              >
+                Ask venue
+              </button>
+              <span id="ask-venue-state" className="action-hint">
+                {caseStatus !== 'ready'
+                  ? 'Available after research'
+                  : unknownCount === 0
+                    ? 'Nothing left to ask'
+                    : `${unknownCount} item${unknownCount === 1 ? '' : 's'} to verify`}
+              </span>
+            </div>
+          </footer>
+        </section>
+      </div>
     </main>
   )
 }

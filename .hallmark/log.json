@@ -1,0 +1,12 @@
+[
+  {
+    "date": "2026-09-14",
+    "scope": "app",
+    "target": "src/App.tsx",
+    "genre": "modern-minimal",
+    "macrostructure": "Workbench",
+    "theme": "restrained-coral",
+    "designSystem": "design.md",
+    "intent": "Replace dark AI-dashboard styling with a calm evidence-first accessibility research workbench while preserving Convex logic and information architecture."
+  }
+]
