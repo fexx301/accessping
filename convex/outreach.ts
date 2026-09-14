@@ -72,6 +72,15 @@ function stringField(value: unknown, key: string): string | null {
   return record && typeof record[key] === 'string' ? record[key] : null
 }
 
+function messageText(message: unknown): string {
+  return (
+    stringField(message, 'text') ??
+    stringField(message, 'extracted_text') ??
+    stringField(message, 'preview') ??
+    ''
+  ).trim()
+}
+
 function isRequirementKey(key: string): key is RequirementKey {
   return requirementKeys.includes(key as RequirementKey)
 }
@@ -310,6 +319,65 @@ export const sendInquiry = action({
       senderEmail: inbox.email,
       questions,
     }
+  },
+})
+
+export const getOutreachForSync = internalQuery({
+  args: { outreachId: v.id('outreach') },
+  handler: async (ctx, { outreachId }): Promise<Doc<'outreach'> | null> => ctx.db.get(outreachId),
+})
+
+export const recordSyncedReply = internalMutation({
+  args: { outreachId: v.id('outreach'), replyText: v.string() },
+  handler: async (ctx, { outreachId, replyText }): Promise<null> => {
+    await ctx.db.patch(outreachId, {
+      status: 'replied',
+      replyText,
+      updatedAt: Date.now(),
+    })
+    return null
+  },
+})
+
+export const syncLatestReply = action({
+  args: { outreachId: v.id('outreach') },
+  handler: async (
+    ctx,
+    { outreachId },
+  ): Promise<{ found: boolean; processed: boolean }> => {
+    const outreach: Doc<'outreach'> | null = await ctx.runQuery(
+      internal.outreach.getOutreachForSync,
+      { outreachId },
+    )
+    if (!outreach?.threadId) return { found: false, processed: false }
+
+    const thread = asRecord(
+      await agentMailFetch(
+        `/inboxes/${encodeURIComponent(outreach.inboxId)}/threads/${encodeURIComponent(outreach.threadId)}`,
+        { method: 'GET' },
+      ),
+    )
+    const messages = Array.isArray(thread?.messages)
+      ? thread.messages
+          .map(asRecord)
+          .filter((item): item is Record<string, unknown> => item !== null)
+      : []
+
+    const recipient = outreach.recipient.toLowerCase()
+    const inbound = [...messages].reverse().find((message) => {
+      const from = stringField(message, 'from')?.toLowerCase() ?? ''
+      return from.includes(recipient) && messageText(message).length > 0
+    })
+    if (!inbound) return { found: false, processed: false }
+
+    const text = messageText(inbound)
+    await ctx.runMutation(internal.outreach.recordSyncedReply, { outreachId, replyText: text })
+    const processed: null = await ctx.runAction(internal.outreach.processVenueReply, {
+      caseId: outreach.caseId,
+      threadId: outreach.threadId,
+      text,
+    })
+    return { found: true, processed: processed === null }
   },
 })
 
