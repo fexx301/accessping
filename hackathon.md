@@ -1,37 +1,32 @@
-# AccessPing — All Gas, No Brakes build note
+# Hackathon log
 
-Event source: https://luma.com/convex-allgas-hackathon?tk=462MyT
+- **Project:** AccessPing
+- **Event:** Convex All Gas Hackathon
+- **What it does:** Turns a venue or event URL into a source-backed accessibility checklist, asks the venue only about missing facts, and updates the checklist when the venue replies.
+- **Live app:** https://greedy-duck-315.convex.site
+- **Repo:** none
+- **Frontend:** Convex static hosting
+- **Convex deployment:** https://greedy-duck-315.convex.cloud
+- **Components:** @convex-dev/static-hosting
+- **Convex features:** schema, tables, indexes, queries, mutations, actions, HTTP actions, realtime queries
+- **Auth:** none
+- **AI models:** gpt-5.6-luna
+- **Started:** 2026-09-14T18:02:49Z
+- **Last updated:** 2026-09-15T01:34:01Z
 
-Primary objective: prize competitiveness.
+## Log
 
-## Pitch
+### 2026-09-14 - ece5c1b
+Created the first AccessPing research workflow and Convex data model for cases and accessibility requirements. The frontend submits venue URLs, the backend researches them, and unsupported details remain unverified rather than being guessed (`convex/schema.ts`, `convex/cases.ts`, `convex/research.ts`, `src/App.tsx`).
 
-For people with specific accessibility needs, AccessPing turns a venue or event URL into a source-backed access checklist, asks the venue only what the web cannot answer, and updates the plan when they reply.
+### 2026-09-14 - 088873a
+Redesigned and refined the app into an evidence-first access ledger with responsive mobile and desktop states, source evidence, explicit unknown/conflicting statuses, and focused follow-up controls (`design.md`, `src/App.tsx`, `src/App.css`).
 
-## Decisive test
+### 2026-09-14 - a2c0fd1
+Added persistent priority selection and approval-gated AgentMail outreach. Added signed inbound webhook handling and reply extraction so venue responses update only the relevant requirement rows through Convex (`convex/outreach.ts`, `convex/emailCallbacks.ts`, `convex/http.ts`, `convex/cases.ts`).
 
-Question: can the system preserve the boundary between explicit evidence and missing information, then update only the relevant unknown field from an inbound venue reply?
+### 2026-09-14 - 3d3e0d0
+Added a local AgentMail reply-sync fallback for development so the full outbound-message-to-reply-to-reactive-update loop could be verified before production webhook deployment (`convex/outreach.ts`).
 
-Pass condition:
-
-- Every confirmed web field has supporting source evidence.
-- Information not supported by the page remains `unknown`.
-- Ambiguous material is `unknown` or `conflicting`, never guessed.
-- A controlled inbound venue reply changes only the requirement it actually answers.
-- The updated state appears reactively through Convex.
-
-## Build contract
-
-Single workflow: venue/event URL + access needs → research official source → show confirmed/unknown information → user approves targeted questions → email venue → receive reply → update checklist live.
-
-Completion evidence: a fresh deployed run shows real Firecrawl research, source-backed confirmed facts, unsupported facts remaining unknown, an AgentMail inquiry sent after approval, an incoming reply, and the corresponding Convex state updating live.
-
-Out of scope: accessibility certification, legal compliance scoring, community reviews, maps/navigation, ticket purchasing, travel planning, bulk outreach, automatic form submission, multi-venue comparison, native mobile apps.
-
-Cut first: crawl monitoring, saved accessibility profiles, multiple simultaneous venues, advanced auth, sharing/social features, nonessential visual polish.
-
-Reconsider only if: the decisive test cannot preserve evidence/unknown boundaries, or an inbound AgentMail reply cannot reliably drive the intended Convex update within the selection spike.
-
-Builder / next milestone: solo builder with AI assistance. Next milestone is a thin deployed path from URL → Firecrawl → structured analysis → Convex → reactive UI.
-
-Pending mandatory conditions: Convex project configuration and sponsor API credentials. Verify final submission/deadline requirements again before submission.
+### 2026-09-15 - working tree
+Finalized the AccessPing branding and selected the hackathon-compliant frontend path. Installed and registered `@convex-dev/static-hosting`, deployed the production backend and static frontend, and verified the public `.convex.site` app serves the production Convex client bundle (`package.json`, `convex/convex.config.ts`, `convex/http.ts`, `src/App.tsx`, `src/App.css`).

@@ -7,10 +7,12 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "npx @convex-dev/static-hosting deploy"
   },
   "dependencies": {
     "@agentmail/convex": "^0.1.0",
+    "@convex-dev/static-hosting": "^0.2.1",
     "@firecrawl/firecrawl-convex": "^0.1.1",
     "convex": "^1.45.0",
     "openai": "^7.15.0",

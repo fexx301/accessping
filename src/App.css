@@ -25,26 +25,37 @@
   min-height: 44px;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2xs);
+  gap: 0.42rem;
   color: var(--color-ink);
-  font-family: var(--font-display);
-  font-size: var(--text-sm);
-  font-weight: 750;
-  letter-spacing: var(--tracking-tight);
   text-decoration: none;
   white-space: nowrap;
 }
 
-.brand-mark {
-  width: var(--space-lg);
-  height: var(--space-lg);
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-control);
-  background: var(--color-ink);
-  color: var(--color-paper);
-  font-size: var(--text-xs);
+.brand-icon {
+  width: 2.65rem;
+  height: 2.23rem;
+  display: block;
+  flex: 0 0 auto;
+  color: var(--color-ink);
+  overflow: visible;
+}
+
+.brand-wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: var(--font-display);
+  font-size: 1.08rem;
   font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.045em;
+}
+
+.brand-wordmark__access {
+  color: var(--color-ink);
+}
+
+.brand-wordmark__ping {
+  color: var(--color-accent);
 }
 
 .product-note {
