@@ -187,6 +187,39 @@ function buildMarkdown(
   return lines.filter((l) => l !== null).join('\n')
 }
 
+function BrandMark({ className = 'brand-icon' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="30 10 196 184" aria-hidden="true" focusable="false">
+      <path
+        d="M62 172 C72 118, 112 58, 142 40 C152 34, 160 42, 156 54 C152 68, 138 78, 122 86 C110 92, 100 100, 96 112"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="34"
+        strokeLinecap="round"
+      />
+      <path
+        d="M98 148 C128 136, 160 146, 180 170 C182 174, 180 179, 175 179 C152 168, 124 164, 102 170 C96 172, 93 164, 94 156 C94 152, 96 149, 98 148 Z"
+        fill="currentColor"
+      />
+      <circle cx="174" cy="80" r="14" fill="var(--color-accent)" />
+      <path
+        d="M197 61 A30 30 0 0 1 197 99"
+        fill="none"
+        stroke="var(--color-accent)"
+        strokeWidth="12"
+        strokeLinecap="round"
+      />
+      <path
+        d="M211 49 A48 48 0 0 1 211 111"
+        fill="none"
+        stroke="var(--color-accent)"
+        strokeWidth="13"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
 function App() {
   const searchParams = new URLSearchParams(window.location.search)
   const previewMode = searchParams.get('preview') === '1'
@@ -254,6 +287,17 @@ function App() {
     const stored = bundle.requirements.filter((r) => r.isPriority).map((r) => r.key)
     setSelectedNeeds(stored)
   }, [bundle, caseId, previewMode])
+
+  // Transient confirmations (clipboard copies, background reply checks)
+  // surface as fixed toasts that never shift the ledger layout.
+  useEffect(() => {
+    if (!shareMessage && !syncMessage) return
+    const timer = window.setTimeout(() => {
+      setShareMessage(null)
+      setSyncMessage(null)
+    }, 6000)
+    return () => window.clearTimeout(timer)
+  }, [shareMessage, syncMessage])
 
   const requirements: DisplayRequirement[] = previewMode
     ? previewRequirements
@@ -586,16 +630,7 @@ function App() {
       </a>
       <header className="topbar">
         <a className="brand" href="#top" aria-label="AccessPing home">
-          <svg
-            className="brand-icon"
-            viewBox="0 0 545 459"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <path d="M249.00 10.50C254.46 9.64 254.25 9.58 258.47 10.03C262.69 10.48 268.83 11.50 274.31 13.19C279.79 14.88 286.65 17.69 291.34 20.16C296.04 22.62 298.31 24.35 302.50 28.00C306.69 31.65 312.81 37.86 316.47 42.03C320.13 46.20 320.80 47.04 324.47 53.03C328.14 59.03 334.14 68.92 338.50 78.00C342.86 87.08 348.96 102.34 350.62 107.50C352.29 112.66 352.12 108.35 348.47 108.97C344.81 109.58 334.65 109.98 328.69 111.19C322.72 112.39 318.30 113.80 312.69 116.19C307.08 118.58 300.06 122.40 295.03 125.53C290.00 128.67 286.75 131.08 282.50 135.00C278.25 138.92 273.53 143.70 269.53 149.03C265.53 154.36 261.25 161.08 258.50 167.00C255.75 172.92 253.98 179.15 253.03 184.53C252.08 189.92 253.49 195.82 252.81 199.31C252.14 202.80 250.72 203.89 248.97 205.47C247.22 207.05 251.53 206.36 242.31 208.81C233.10 211.27 208.62 215.96 193.69 220.19C178.75 224.42 164.96 229.13 152.69 234.19C140.41 239.24 128.81 245.31 120.03 250.53C111.26 255.76 104.45 261.78 100.03 265.53C95.61 269.28 95.67 269.84 93.53 273.03C91.39 276.22 88.44 280.94 87.19 284.69C85.93 288.43 85.83 292.40 86.00 295.50C86.17 298.60 86.82 300.51 88.19 303.31C89.55 306.11 89.55 307.95 94.19 312.31C98.83 316.67 105.23 322.43 116.03 329.47C126.83 336.51 149.48 348.69 158.97 354.53C168.46 360.38 169.38 361.29 172.97 364.53C176.56 367.78 178.83 370.51 180.50 374.00C182.17 377.49 182.95 382.11 183.00 385.50C183.05 388.89 181.81 391.81 180.81 394.31C179.81 396.81 180.64 396.64 177.00 400.50C173.36 404.36 164.24 413.08 158.97 417.47C153.69 421.86 149.62 424.29 145.34 426.84C141.07 429.40 138.29 431.12 133.31 432.81C128.33 434.50 119.60 436.28 115.47 436.97C111.34 437.66 112.49 437.66 108.53 436.97C104.57 436.28 97.27 434.90 91.69 432.81C86.10 430.73 80.73 427.94 75.03 424.47C69.33 421.00 63.75 417.42 57.50 412.00C51.25 406.58 43.26 398.74 37.53 391.97C31.81 385.19 27.05 378.45 23.16 371.34C19.27 364.23 16.38 356.79 14.19 349.31C12.00 341.83 10.56 333.43 10.03 326.47C9.51 319.51 9.84 314.33 11.03 307.53L249.00 10.50Z" fill="currentColor" />
-            <path d="M258.97 238.53C265.29 238.53 272.39 238.45 279.47 239.03C286.55 239.61 291.49 239.67 301.47 242.03C311.44 244.39 330.17 250.00 339.31 253.19C348.46 256.38 350.73 258.10 356.34 261.16C361.95 264.21 367.94 268.06 372.97 271.53C377.99 275.01 381.08 276.92 386.50 282.00C391.92 287.08 400.24 295.59 405.47 302.03C410.69 308.47 414.45 314.88 417.84 320.66C421.23 326.43 422.98 329.35 425.81 336.69C428.64 344.03 432.79 356.55 434.81 364.69C436.84 372.83 437.44 378.90 437.97 385.53C438.49 392.16 438.49 398.34 437.97 404.47C437.44 410.60 436.67 416.33 434.81 422.31C432.96 428.29 429.15 436.15 426.84 440.34C424.54 444.54 423.20 445.70 420.97 447.47C418.74 449.24 415.88 450.71 413.47 450.97C411.06 451.22 411.67 455.49 406.50 449.00C401.33 442.51 389.55 421.78 382.47 412.03C375.39 402.28 371.92 398.58 364.00 390.50C356.08 382.42 343.81 370.86 334.97 363.53C326.13 356.20 319.41 351.93 310.97 346.53C302.53 341.14 293.79 336.05 284.34 331.16C274.90 326.27 263.15 321.02 254.31 317.19C245.47 313.36 244.58 312.75 231.31 308.19C218.04 303.62 185.73 293.60 174.69 289.81C163.64 286.03 167.39 286.94 165.03 285.47C162.67 283.99 161.70 282.80 160.53 280.97C159.36 279.14 158.00 276.82 158.00 274.50C158.00 272.18 159.03 269.36 160.53 267.03C162.04 264.70 164.01 262.67 167.03 260.53C170.06 258.39 174.74 256.08 178.69 254.19C182.63 252.30 184.02 251.19 190.69 249.19C197.35 247.19 210.21 243.88 218.69 242.19C227.16 240.49 234.82 239.64 241.53 239.03C248.24 238.42 252.65 238.53 258.97 238.53Z" fill="currentColor" />
-            <path d="M466.00 45.50C468.88 44.94 473.98 44.52 477.31 45.19C480.64 45.86 482.61 46.56 485.97 49.53C489.33 52.51 493.99 58.34 497.47 63.03C500.95 67.72 503.29 71.38 506.84 77.66C510.40 83.93 515.32 92.68 518.81 100.69C522.31 108.69 525.48 118.02 527.81 125.69C530.15 133.35 531.62 140.38 532.81 146.69C534.01 152.99 534.60 156.56 534.97 163.53C535.33 170.50 535.17 182.68 535.00 188.50C534.83 194.32 534.50 194.67 533.97 198.47C533.44 202.27 533.17 205.51 531.81 211.31C530.45 217.12 528.64 225.31 525.81 233.31C522.98 241.32 518.73 251.57 514.84 259.34C510.95 267.12 505.95 274.61 502.47 279.97C498.99 285.32 496.80 288.80 493.97 291.47C491.14 294.14 488.52 295.24 485.47 295.97C482.42 296.69 478.43 296.40 475.69 295.81C472.95 295.23 470.95 293.88 469.03 292.47C467.11 291.06 465.49 289.68 464.16 287.34C462.82 285.01 461.19 281.41 461.03 278.47C460.87 275.53 460.05 275.38 463.19 269.69C466.32 264.00 475.57 251.91 479.84 244.34C484.11 236.78 486.48 230.48 488.81 224.31C491.14 218.14 492.45 213.95 493.81 207.31C495.18 200.68 496.47 190.63 497.00 184.50C497.53 178.37 497.47 176.53 496.97 170.53C496.46 164.54 495.83 156.51 493.97 148.53C492.11 140.56 489.23 131.10 485.81 122.69C482.40 114.27 477.03 104.31 473.47 98.03C469.91 91.76 467.29 88.71 464.47 85.03C461.65 81.35 458.58 78.92 456.53 75.97C454.48 73.02 452.91 69.69 452.19 67.31C451.46 64.93 451.63 64.07 452.19 61.69C452.74 59.31 454.22 55.22 455.53 53.03C456.84 50.84 458.29 49.79 460.03 48.53C461.78 47.28 463.12 46.06 466.00 45.50Z" fill="var(--color-accent)" />
-          </svg>
+          <BrandMark />
           <span className="brand-wordmark" aria-hidden="true">
             <span className="brand-wordmark__access">Access</span>
             <span className="brand-wordmark__ping">Ping</span>
@@ -710,7 +745,7 @@ function App() {
                         onClick={() => void handleDeleteHistory(item.caseId as Id<'cases'>)}
                         aria-label={`Delete check for ${item.venueName || item.url}`}
                       >
-                        ×
+                        Remove
                       </button>
                     </li>
                   ))}
@@ -843,11 +878,6 @@ function App() {
               <button type="button" className="share-action" onClick={() => window.print()}>
                 Print
               </button>
-              {shareMessage && (
-                <p className="share-message" role="status">
-                  {shareMessage}
-                </p>
-              )}
             </div>
           )}
 
@@ -874,8 +904,7 @@ function App() {
                               onChange={() => toggleNeed(option.key)}
                               aria-label={`Prioritise ${option.label}`}
                             />
-                            <span className="priority-toggle__mark" aria-hidden="true">{selected ? '✓' : '+'}</span>
-                            <span>{selected ? 'Priority' : 'Mark priority'}</span>
+                            <span className="priority-toggle__label">{selected ? 'Priority' : 'Mark priority'}</span>
                           </label>
                         </div>
                       </div>
@@ -905,8 +934,7 @@ function App() {
                                 onChange={() => toggleNeed(item.key)}
                                 aria-label={`Prioritise ${item.label}`}
                               />
-                              <span className="priority-toggle__mark" aria-hidden="true">{selected ? '✓' : '+'}</span>
-                              <span>{selected ? 'Priority' : 'Mark priority'}</span>
+                              <span className="priority-toggle__label">{selected ? 'Priority' : 'Mark priority'}</span>
                             </label>
                           </div>
                           {item.answer ? (
@@ -940,7 +968,7 @@ function App() {
                           {item.sourceUrl ? (
                             <a href={item.sourceUrl} target="_blank" rel="noreferrer">
                               <span>{domain}</span>
-                              <span aria-hidden="true">↗</span>
+                              <span className="sr-only"> (opens in new tab)</span>
                             </a>
                           ) : item.status === 'confirmed_venue' ? (
                             <span className="source-empty">Venue reply</span>
@@ -1047,15 +1075,10 @@ function App() {
                           onClick={() => void handleSyncReply()}
                           disabled={isSyncing}
                         >
-                          {isSyncing ? 'Checking…' : 'Check for reply now'}
+                          {isSyncing ? 'Checking…' : 'Check reply'}
                         </button>
                       )}
-                      {syncMessage && (
-                        <p className="outreach-message" role="status">
-                          {syncMessage}
-                        </p>
-                      )}
-                    </form>
+                      </form>
                   )}
                 </div>
               )}
@@ -1067,10 +1090,13 @@ function App() {
           )}
         </section>
       </div>
+      <div className="toast-region" aria-live="polite" aria-atomic="true">
+        {shareMessage && <p className="toast">{shareMessage}</p>}
+        {syncMessage && <p className="toast">{syncMessage}</p>}
+      </div>
     </main>
   )
 }
-
 function SharedLedger({ shareToken }: { shareToken: string }) {
   const shared = useQuery(api.cases.getSharedBundle, { shareToken })
   const screenshot = useQuery(
@@ -1096,6 +1122,7 @@ function SharedLedger({ shareToken }: { shareToken: string }) {
       </a>
       <header className="topbar">
         <span className="brand" aria-label="AccessPing shared check">
+          <BrandMark />
           <span className="brand-wordmark" aria-hidden="true">
             <span className="brand-wordmark__access">Access</span>
             <span className="brand-wordmark__ping">Ping</span>
@@ -1209,7 +1236,7 @@ function SharedLedger({ shareToken }: { shareToken: string }) {
                       {item.sourceUrl ? (
                         <a href={item.sourceUrl} target="_blank" rel="noreferrer">
                           <span>{domain}</span>
-                          <span aria-hidden="true">↗</span>
+                          <span className="sr-only"> (opens in new tab)</span>
                         </a>
                       ) : item.status === 'confirmed_venue' ? (
                         <span className="source-empty">Venue reply</span>

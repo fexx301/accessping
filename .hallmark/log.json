@@ -1,5 +1,16 @@
 [
   {
+    "date": "2026-09-15",
+    "scope": "app-critic-loop",
+    "target": "src/App.tsx + src/App.css + src/index.css",
+    "genre": "modern-minimal",
+    "macrostructure": "Workbench",
+    "theme": "restrained-coral",
+    "designSystem": "design.md",
+    "intent": "Independent critic loop: round 1 scored 7.3 (1 critical, 2 major, 6 minor); all findings implemented (accent primary CTA, history states, shared square-A mark, token snaps, nowrap share actions, text-only affordances, evidence rule, toast region); round 2 re-score 9.6 with 0 critical, 0 major, 3 minor, all three fixed post-round.",
+    "score": "9.6 weighted (P5 H5 E4 S5 R5 V5)"
+  },
+  {
     "date": "2026-09-14",
     "scope": "app",
     "target": "src/App.tsx",
