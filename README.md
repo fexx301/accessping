@@ -1,32 +1,82 @@
-# React + TypeScript + Vite
+# AccessPing
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Evidence-first venue accessibility checks. Paste a venue or event URL, get a source-backed checklist for six practical access details, and ask the venue only about the missing facts. Venue email replies update the checklist in realtime.
 
-Currently, two official plugins are available:
+Live app: https://greedy-duck-315.convex.site
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## How it works
 
-## React Compiler
+1. **Research** — Firecrawl scrapes the submitted page with link discovery, maps the site for accessibility pages, ranks same-origin candidates by accessibility signal, and scrapes up to five sourced pages. OpenAI (`gpt-5.6-luna` via the configured endpoint) extracts exactly six requirements. Anything without explicit evidence stays `unknown`; inconsistent evidence becomes `conflicting`.
+2. **Prioritise** — the user marks which unknowns matter. Priorities shape follow-up only, never evidence.
+3. **Outreach** — AgentMail sends one focused message with only the still-unverified questions (priority-first). Max 3 sends per case with a 60s cooldown.
+4. **Reply** — the signed AgentMail `message.received` webhook (plus a manual “Check for reply now” fallback) parses the venue reply. `unknown` → `confirmed_venue`; corrections to web-sourced rows surface as `conflicting` for human review instead of silently overwriting.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Stack
 
-## Expanding the Oxlint configuration
+React 19, TypeScript, Vite, Convex (schema, queries, mutations, actions, Node actions, HTTP actions, realtime), `@convex-dev/static-hosting`, Firecrawl, AgentMail, OpenAI SDK.
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+## Getting started
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npx convex dev        # provisions VITE_CONVEX_URL and pushes schema
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+### Environment
+
+Copy `.env.example`. Client:
+
+- `VITE_CONVEX_URL` — set automatically by `npx convex dev`.
+
+Server (`npx convex env set KEY value`):
+
+- `FIRECRAWL_API_KEY` (required)
+- `FIRECRAWL_WEBHOOK_SECRET` (optional, unused by single-scrape flow)
+- `OPENAI_API_KEY` (required)
+- `OPENAI_MODEL` (optional, default `gpt-5.6-luna`)
+- `OPENAI_BASE_URL` (optional, dev only)
+- `AGENTMAIL_API_KEY` (required)
+- `AGENTMAIL_BASE_URL` (optional)
+- `AGENTMAIL_WEBHOOK_SECRET` (optional locally, **required in production** — webhook returns 503 without it)
+- `AGENTMAIL_INBOX_ID` / `AGENTMAIL_INBOX_EMAIL` (optional — auto-provisioned otherwise)
+- `SITE_URL` (required for auth — `http://localhost:5173` locally, the `.convex.site` URL in production)
+- `JWT_PRIVATE_KEY` / `JWKS` (required for auth — generate with `node` + `jose`, see Convex Auth manual setup)
+
+Register the production webhook: AgentMail `message.received` → `https://<deployment>.convex.site/agentmail/webhook`.
+
+### Scripts
+
+- `npm run dev` — Vite dev server
+- `npm run build` — `tsc -b && vite build`
+- `npm run typecheck` — `tsc -b`
+- `npm run lint` — oxlint
+- `npm test` — Node built-in test runner (`src/**/*.test.ts`)
+- `npm run deploy` — static-hosting deploy
+
+## Ownership model
+
+Every visitor is auto-signed in with anonymous Convex Auth (`@convex-dev/auth`). Each created case is stamped with the auth user id **and** a browser-session `ownerToken` stored in localStorage:
+
+- Reads (`getBundle`), priority changes, research retries, deletes, and outreach sends require the auth identity or the token when the case has markers; legacy open cases stay readable.
+- `myCases` lists the signed-in user's checks across browsers; deep links (`?case=<id>`) work on the creating browser.
+- History (`getHistory`) verifies every `(caseId, ownerToken)` pair server-side and also matches the caller identity.
+- Global brake: max 60 case creates/hour. Per-case: max 3 venue sends + 60s cooldown, max 3 research attempts.
+
+## Data model
+
+- `cases` — url, venueName, status (`queued|researching|ready|failed`), error, userId, ownerToken, attemptCount, researchSources, researchModel.
+- `requirements` — caseId, key (6 fixed), label, status (`confirmed_web|confirmed_venue|unknown|conflicting`), isPriority, answer, evidence, sourceUrl.
+- `outreach` — caseId, recipient, inboxId, threadId, messageId, questions, replyText, status (`draft|pending|sent|replied|failed`).
+- `emailEvents` — webhook dedupe by eventId.
+- `settings` — AgentMail inbox cache.
+
+Retention: delete checks from the Recent list any time. `cases:purgeOld` removes `failed`/`queued` cases older than 30 days (wire to a cron when ready).
+
+## Testing
+
+`npm test` runs pure unit tests (URL validation, outreach guards). Convex integration for `saveAnalysis`/`applyVenueReply`/webhook dedupe is exercised via the production smoke in `hackathon.md`; add `convex-test` coverage before scaling outreach.
+
+## Deployment
+
+Frontend is served from Convex static hosting (`.convex.site`). Backend + cron + `/health` and `/agentmail/webhook` run on the same Convex deployment.

@@ -3,8 +3,22 @@ import { verifyAgentMailWebhook, WebhookVerificationError } from '@agentmail/con
 import { httpRouter } from 'convex/server'
 import { components, internal } from './_generated/api'
 import { env, httpAction } from './_generated/server'
+import { auth } from './auth'
 
 const http = httpRouter()
+
+auth.addHttpRoutes(http)
+
+http.route({
+  path: '/health',
+  method: 'GET',
+  handler: httpAction(async () => {
+    return new Response(JSON.stringify({ ok: true, service: 'accessping' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }),
+})
 
 http.route({
   path: '/agentmail/webhook',

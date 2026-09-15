@@ -1,4 +1,5 @@
 import { defineSchema, defineTable } from 'convex/server'
+import { authTables } from '@convex-dev/auth/server'
 import { v } from 'convex/values'
 
 const requirementStatus = v.union(
@@ -9,6 +10,7 @@ const requirementStatus = v.union(
 )
 
 export default defineSchema({
+  ...authTables,
   cases: defineTable({
     url: v.string(),
     venueName: v.optional(v.string()),
@@ -19,9 +21,24 @@ export default defineSchema({
       v.literal('failed'),
     ),
     error: v.optional(v.string()),
+    // Authenticated owner (Convex Auth user id). Stamped at creation when
+    // the caller is signed in; legacy cases without one stay readable via
+    // their ownerToken for backwards compat.
+    userId: v.optional(v.string()),
+    // Ownership token: required for all cases created after this change.
+    // Legacy cases without a token remain readable for backwards compat,
+    // but all mutations require a match when a token is present.
+    ownerToken: v.optional(v.string()),
+    attemptCount: v.optional(v.number()),
+    researchSources: v.optional(
+      v.array(v.object({ url: v.string(), chars: v.number() })),
+    ),
+    researchModel: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index('by_createdAt', ['createdAt']),
+  })
+    .index('by_createdAt', ['createdAt'])
+    .index('by_userId', ['userId']),
 
   requirements: defineTable({
     caseId: v.id('cases'),

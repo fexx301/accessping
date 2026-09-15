@@ -8,8 +8,10 @@
  * @module
  */
 
+import type * as auth from "../auth.js";
 import type * as cases from "../cases.js";
 import type * as emailCallbacks from "../emailCallbacks.js";
+import type * as guards from "../guards.js";
 import type * as http from "../http.js";
 import type * as outreach from "../outreach.js";
 import type * as outreachNode from "../outreachNode.js";
@@ -23,8 +25,10 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  auth: typeof auth;
   cases: typeof cases;
   emailCallbacks: typeof emailCallbacks;
+  guards: typeof guards;
   http: typeof http;
   outreach: typeof outreach;
   outreachNode: typeof outreachNode;

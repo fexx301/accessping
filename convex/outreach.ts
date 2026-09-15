@@ -9,6 +9,7 @@ import {
 } from './_generated/server'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
+import { classifyReplyUpdate, isValidEmail, sendGuard } from './guards'
 
 const requirementKeys = [
   'step_free_entrance',
@@ -173,13 +174,22 @@ export const getSendContext = internalQuery({
   handler: async (
     ctx,
     { caseId },
-  ): Promise<{ caseRecord: Doc<'cases'> | null; requirements: Doc<'requirements'>[] }> => {
+  ): Promise<{
+    caseRecord: Doc<'cases'> | null
+    requirements: Doc<'requirements'>[]
+    outreachList: Doc<'outreach'>[]
+  }> => {
     const caseRecord = await ctx.db.get(caseId)
     const requirements = await ctx.db
       .query('requirements')
       .withIndex('by_caseId', (q) => q.eq('caseId', caseId))
       .take(20)
-    return { caseRecord, requirements }
+    const outreachList = await ctx.db
+      .query('outreach')
+      .withIndex('by_caseId', (q) => q.eq('caseId', caseId))
+      .order('desc')
+      .take(10)
+    return { caseRecord, requirements, outreachList }
   },
 })
 
@@ -211,10 +221,10 @@ export const recordOutreach = internalMutation({
 })
 
 export const sendInquiry = action({
-  args: { caseId: v.id('cases'), recipient: v.string() },
+  args: { caseId: v.id('cases'), recipient: v.string(), ownerToken: v.optional(v.string()) },
   handler: async (
     ctx,
-    { caseId, recipient },
+    { caseId, recipient, ownerToken },
   ): Promise<{
     outreachId: Id<'outreach'>
     threadId: string
@@ -222,17 +232,34 @@ export const sendInquiry = action({
     senderEmail: string
     questions: Question[]
   }> => {
-    const cleanRecipient = recipient.trim()
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanRecipient)) {
+    const cleanRecipient = recipient.trim().toLowerCase()
+    if (!isValidEmail(cleanRecipient)) {
       throw new Error('Enter a valid venue email address.')
     }
 
-    const context: { caseRecord: Doc<'cases'> | null; requirements: Doc<'requirements'>[] } =
-      await ctx.runQuery(internal.outreach.getSendContext, { caseId })
+    const context = await ctx.runQuery(internal.outreach.getSendContext, { caseId })
 
     if (!context.caseRecord || context.caseRecord.status !== 'ready') {
       throw new Error('Finish the venue research before sending follow-up questions.')
     }
+    {
+      const identity = await ctx.auth.getUserIdentity()
+      const userId = identity?.subject ?? null
+      const tokenOk =
+        !context.caseRecord.ownerToken || context.caseRecord.ownerToken === ownerToken
+      const authOk =
+        !!userId && !!context.caseRecord.userId && context.caseRecord.userId === userId
+      if (!tokenOk && !authOk) {
+        throw new Error('This check belongs to another account or browser session.')
+      }
+    }
+
+    // Abuse brakes: per-case send cap + cooldown.
+    const guard = sendGuard({
+      outreachCount: context.outreachList.length,
+      latestUpdatedAt: context.outreachList[0]?.updatedAt ?? null,
+    })
+    if (!guard.ok) throw new Error(guard.reason)
 
     const unknown = context.requirements.flatMap((item) =>
       item.status === 'unknown' && isRequirementKey(item.key) ? [{ ...item, key: item.key }] : [],
@@ -243,21 +270,26 @@ export const sendInquiry = action({
       throw new Error('There are no unverified access details left to ask about.')
     }
 
+    // Resend guard: a fresh send after a reply must cover still-unknown items.
+    // (Unknowns are the only sendable set, so reaching here already satisfies it.)
+
     const questions: Question[] = selected.map((item) => ({
       key: item.key,
       label: item.label,
       question: questionBank[item.key],
     }))
     const venueName = context.caseRecord.venueName ?? 'your venue'
+    const caseUrl = context.caseRecord.url
     const text = [
       'Hello,',
       '',
-      `I’m checking a few accessibility details for ${venueName}. Could you please help confirm the following?`,
+      `I’m checking a few accessibility details for ${venueName} (${caseUrl}). Could you please help confirm the following?`,
       '',
       ...questions.map((item, index) => `${index + 1}. ${item.question}`),
       '',
+      'If a feature is not available, saying so explicitly is just as helpful.',
       'Thank you for your help.',
-      'AccessPing',
+      'AccessPing — evidence-first accessibility checks. Please reply to this email; your answers update our checklist.',
     ].join('\n')
 
     const inbox = await getOrCreateInbox(ctx)
@@ -300,6 +332,16 @@ export const getOutreachForSync = internalQuery({
   handler: async (ctx, { outreachId }): Promise<Doc<'outreach'> | null> => ctx.db.get(outreachId),
 })
 
+export const getLatestOutreach = internalQuery({
+  args: { caseId: v.id('cases') },
+  handler: async (ctx, { caseId }): Promise<Doc<'outreach'> | null> =>
+    ctx.db
+      .query('outreach')
+      .withIndex('by_caseId', (q) => q.eq('caseId', caseId))
+      .order('desc')
+      .first(),
+})
+
 export const recordSyncedReply = internalMutation({
   args: { outreachId: v.id('outreach'), replyText: v.string() },
   handler: async (ctx, { outreachId, replyText }): Promise<null> => {
@@ -313,15 +355,17 @@ export const recordSyncedReply = internalMutation({
 })
 
 export const syncLatestReply = action({
-  args: { outreachId: v.id('outreach') },
+  args: { outreachId: v.optional(v.id('outreach')), caseId: v.optional(v.id('cases')) },
   handler: async (
     ctx,
-    { outreachId },
+    { outreachId, caseId },
   ): Promise<{ found: boolean; processed: boolean }> => {
-    const outreach: Doc<'outreach'> | null = await ctx.runQuery(
-      internal.outreach.getOutreachForSync,
-      { outreachId },
-    )
+    let outreach: Doc<'outreach'> | null = null
+    if (outreachId) {
+      outreach = await ctx.runQuery(internal.outreach.getOutreachForSync, { outreachId })
+    } else if (caseId) {
+      outreach = await ctx.runQuery(internal.outreach.getLatestOutreach, { caseId })
+    }
     if (!outreach?.threadId) return { found: false, processed: false }
 
     const thread = asRecord(
@@ -344,7 +388,10 @@ export const syncLatestReply = action({
     if (!inbound) return { found: false, processed: false }
 
     const text = messageText(inbound)
-    await ctx.runMutation(internal.outreach.recordSyncedReply, { outreachId, replyText: text })
+    await ctx.runMutation(internal.outreach.recordSyncedReply, {
+      outreachId: outreach._id,
+      replyText: text,
+    })
     const processed: null = await ctx.runAction(internal.outreach.processVenueReply, {
       caseId: outreach.caseId,
       threadId: outreach.threadId,
@@ -356,29 +403,36 @@ export const syncLatestReply = action({
 
 export const getReplyContext = internalQuery({
   args: { caseId: v.id('cases') },
-  handler: async (ctx, { caseId }): Promise<Array<{ key: string; label: string }>> => {
+  handler: async (
+    ctx,
+    { caseId },
+  ): Promise<Array<{ key: string; label: string; status: string; answer?: string }>> => {
     const requirements = await ctx.db
       .query('requirements')
       .withIndex('by_caseId', (q) => q.eq('caseId', caseId))
       .take(20)
+    // Include unknowns AND web-sourced rows so venue corrections to published
+    // facts are surfaced as conflicts instead of being silently dropped.
     return requirements
-      .filter((item) => item.status === 'unknown' && isRequirementKey(item.key))
-      .map((item) => ({ key: item.key, label: item.label }))
+      .filter((item) => item.status !== 'confirmed_venue' && isRequirementKey(item.key))
+      .map((item) => ({
+        key: item.key,
+        label: item.label,
+        status: item.status,
+        answer: item.answer,
+      }))
   },
 })
 
 export const processVenueReply = internalAction({
   args: { caseId: v.id('cases'), threadId: v.string(), text: v.string() },
   handler: async (ctx, { caseId, text }): Promise<null> => {
-    const context: Array<{ key: string; label: string }> = await ctx.runQuery(
-      internal.outreach.getReplyContext,
-      { caseId },
-    )
+    const context = await ctx.runQuery(internal.outreach.getReplyContext, { caseId })
     if (context.length === 0) return null
 
     const allowed = new Set(context.map((item) => item.key))
     const extracted = await ctx.runAction(internal.outreachNode.extractVenueReply, {
-      context,
+      context: context.map(({ key, label, status }) => ({ key, label, status })),
       text: text.slice(0, 30_000),
     })
     const updates = extracted.updates
@@ -418,14 +472,32 @@ export const applyVenueReply = internalMutation({
 
     for (const update of updates) {
       const requirement = byKey.get(update.key)
-      if (!requirement || requirement.status !== 'unknown') continue
-      await ctx.db.patch(requirement._id, {
-        status: 'confirmed_venue',
-        answer: update.answer,
-        evidence: update.evidence,
-        sourceUrl: undefined,
-        updatedAt: now,
-      })
+      if (!requirement) continue
+      const decision = classifyReplyUpdate(
+        requirement.status as 'confirmed_web' | 'confirmed_venue' | 'unknown' | 'conflicting',
+      )
+      if (decision === 'skip') continue
+      if (decision === 'confirm') {
+        await ctx.db.patch(requirement._id, {
+          status: 'confirmed_venue',
+          answer: update.answer,
+          evidence: update.evidence,
+          sourceUrl: undefined,
+          updatedAt: now,
+        })
+      } else {
+        // Venue answered a web-sourced row: surface as a conflict for human
+        // review instead of silently overwriting published evidence.
+        const priorEvidence = requirement.evidence ?? requirement.answer ?? ''
+        await ctx.db.patch(requirement._id, {
+          status: 'conflicting',
+          answer: update.answer,
+          evidence: priorEvidence
+            ? `Web: ${priorEvidence} | Venue reply: ${update.evidence}`
+            : `Venue reply: ${update.evidence}`,
+          updatedAt: now,
+        })
+      }
     }
     return null
   },

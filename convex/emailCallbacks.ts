@@ -111,6 +111,9 @@ export const onAgentMailEvent = internalMutation({
     const sent = ['message.sent', 'message.delivered'].includes(event.event_type)
 
     if (failed || sent) {
+      // Terminal state guard: a late delivery/sent event must never overwrite
+      // a venue reply that already arrived.
+      if (outreach.status === 'replied') return null
       await ctx.db.patch(outreach._id, {
         ...(threadId ? { threadId } : {}),
         status: failed ? 'failed' : 'sent',

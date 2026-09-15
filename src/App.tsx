@@ -1,7 +1,9 @@
-import { useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useAction, useMutation, useQuery } from 'convex/react'
+import { useConvexAuth } from '@convex-dev/auth/react'
 import { api } from '../convex/_generated/api'
 import type { Id } from '../convex/_generated/dataModel'
+import { MAX_SENDS_PER_CASE } from '../convex/guards'
 import './App.css'
 
 type RequirementStatus =
@@ -26,6 +28,8 @@ type DisplayRequirement = {
   sourceUrl?: string
 }
 
+type OwnedCaseRef = { caseId: Id<'cases'>; ownerToken: string }
+
 const needOptions: NeedOption[] = [
   { key: 'step_free_entrance', label: 'Step-free entrance' },
   { key: 'accessible_toilet', label: 'Accessible toilet' },
@@ -39,7 +43,7 @@ const statusCopy: Record<RequirementStatus, string> = {
   confirmed_web: 'Source confirmed',
   confirmed_venue: 'Venue confirmed',
   unknown: 'Unverified',
-  conflicting: 'Conflicting sources',
+  conflicting: 'Conflicting evidence',
 }
 
 const previewRequirements: DisplayRequirement[] = [
@@ -92,6 +96,9 @@ const previewRequirements: DisplayRequirement[] = [
   },
 ]
 
+const TOKENS_KEY = 'accessping:tokens:v1'
+const HISTORY_KEY = 'accessping:history:v1'
+
 function sourceDomain(sourceUrl?: string) {
   if (!sourceUrl) return null
   try {
@@ -101,27 +108,132 @@ function sourceDomain(sourceUrl?: string) {
   }
 }
 
+function readTokenMap(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(TOKENS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, string>
+    return typeof parsed === 'object' && parsed !== null ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeTokenMap(map: Record<string, string>) {
+  try {
+    localStorage.setItem(TOKENS_KEY, JSON.stringify(map))
+  } catch {
+    // Storage may be unavailable (private mode); ownership still works in-memory.
+  }
+}
+
+function readHistoryOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as string[]
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function writeHistoryOrder(order: string[]) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(order.slice(0, 20)))
+  } catch {
+    // ignore
+  }
+}
+
+function newOwnerToken(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '')
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+}
+
+function buildMarkdown(
+  venueName: string | undefined,
+  url: string | undefined,
+  requirements: DisplayRequirement[],
+): string {
+  const lines = [
+    `# AccessPing checklist${venueName ? ` — ${venueName}` : ''}`,
+    url ? `Source: ${url}` : null,
+    '',
+    ...requirements.map((r) => {
+      const state = statusCopy[r.status]
+      const parts = [`## ${r.label} — ${state}`]
+      if (r.answer) parts.push('', r.answer)
+      if (r.evidence) parts.push('', `Evidence: ${r.evidence}`)
+      if (r.sourceUrl) parts.push('', `Source: ${r.sourceUrl}`)
+      return parts.join('\n')
+    }),
+    '',
+    'Unverified means the source did not state it — not that it is unavailable.',
+  ]
+  return lines.filter((l) => l !== null).join('\n')
+}
+
 function App() {
-  const previewMode = new URLSearchParams(window.location.search).get('preview') === '1'
+  const searchParams = new URLSearchParams(window.location.search)
+  const previewMode = searchParams.get('preview') === '1'
+  const deepLinkedCase = searchParams.get('case') as Id<'cases'> | null
+  const { isAuthenticated } = useConvexAuth()
+
   const [url, setUrl] = useState(previewMode ? 'https://example.com/accessibility' : '')
   const [urlTouched, setUrlTouched] = useState(false)
   const [selectedNeeds, setSelectedNeeds] = useState<string[]>(
     previewMode ? ['accessible_seating', 'hearing_support'] : [],
   )
-  const [caseId, setCaseId] = useState<Id<'cases'> | null>(null)
+  const [caseId, setCaseId] = useState<Id<'cases'> | null>(deepLinkedCase)
+  const [ownerTokens, setOwnerTokens] = useState<Record<string, string>>(() => readTokenMap())
+  const [historyOrder, setHistoryOrder] = useState<string[]>(() => readHistoryOrder())
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [isStarting, setIsStarting] = useState(false)
+  const [isRetrying, setIsRetrying] = useState(false)
   const [questionsOpen, setQuestionsOpen] = useState(previewMode)
   const [recipientEmail, setRecipientEmail] = useState('')
   const [sendError, setSendError] = useState<string | null>(null)
   const [isSending, setIsSending] = useState(false)
+  const [syncMessage, setSyncMessage] = useState<string | null>(null)
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [shareMessage, setShareMessage] = useState<string | null>(null)
+  const [historyError, setHistoryError] = useState<string | null>(null)
   const reportStatusRef = useRef<HTMLDivElement>(null)
+  const hydratedCaseRef = useRef<string | null>(null)
 
   const createCase = useMutation(api.cases.create)
   const setPriority = useMutation(api.cases.setPriority)
+  const resetForRetry = useMutation(api.cases.resetForRetry)
+  const removeCase = useMutation(api.cases.remove)
   const analyzeVenue = useAction(api.research.analyzeVenue)
   const sendInquiry = useAction(api.outreach.sendInquiry)
-  const bundle = useQuery(api.cases.getBundle, caseId ? { caseId } : 'skip')
+  const syncLatestReply = useAction(api.outreach.syncLatestReply)
+
+  const ownerToken = caseId ? ownerTokens[caseId] : undefined
+  const bundle = useQuery(
+    api.cases.getBundle,
+    caseId ? { caseId, ownerToken } : 'skip',
+  )
+  const historyRefs: OwnedCaseRef[] = historyOrder
+    .map((id) => ({ caseId: id as Id<'cases'>, ownerToken: ownerTokens[id] }))
+    .filter((r) => r.ownerToken)
+    .slice(0, 10)
+  const history = useQuery(
+    api.cases.getHistory,
+    previewMode || historyRefs.length === 0 ? 'skip' : { refs: historyRefs },
+  )
+
+  // Hydrate priority selection from the stored case exactly once per case.
+  useEffect(() => {
+    if (previewMode || !bundle || !caseId) return
+    if (hydratedCaseRef.current === caseId) return
+    hydratedCaseRef.current = caseId
+    const stored = bundle.requirements.filter((r) => r.isPriority).map((r) => r.key)
+    setSelectedNeeds(stored)
+  }, [bundle, caseId, previewMode])
 
   const requirements: DisplayRequirement[] = previewMode
     ? previewRequirements
@@ -152,6 +264,15 @@ function App() {
         ? 'Use a complete http:// or https:// venue or event URL.'
         : null
 
+  function persistOwnership(nextCaseId: Id<'cases'>, token: string) {
+    const nextTokens = { ...readTokenMap(), [nextCaseId]: token }
+    writeTokenMap(nextTokens)
+    setOwnerTokens(nextTokens)
+    const nextOrder = [nextCaseId, ...readHistoryOrder().filter((id) => id !== nextCaseId)].slice(0, 20)
+    writeHistoryOrder(nextOrder)
+    setHistoryOrder(nextOrder)
+  }
+
   function toggleNeed(key: string) {
     const nextIsPriority = !selectedNeeds.includes(key)
 
@@ -160,12 +281,14 @@ function App() {
     )
 
     if (caseId && !previewMode) {
-      void setPriority({ caseId, key, isPriority: nextIsPriority }).catch((error: unknown) => {
-        console.error('Could not save priority', error)
-        setSelectedNeeds((current) =>
-          nextIsPriority ? current.filter((item) => item !== key) : [...current, key],
-        )
-      })
+      void setPriority({ caseId, key, isPriority: nextIsPriority, ownerToken }).catch(
+        (error: unknown) => {
+          console.error('Could not save priority', error)
+          setSelectedNeeds((current) =>
+            nextIsPriority ? current.filter((item) => item !== key) : [...current, key],
+          )
+        },
+      )
     }
   }
 
@@ -180,22 +303,50 @@ function App() {
     setQuestionsOpen(false)
     setIsStarting(true)
 
+    const token = newOwnerToken()
     try {
-      const nextCaseId = await createCase({ url: normalizedUrl, priorityKeys: selectedNeeds })
+      const result = await createCase({ url: normalizedUrl, priorityKeys: selectedNeeds, ownerToken: token })
+      const nextCaseId = result.caseId
+      persistOwnership(nextCaseId, token)
       setCaseId(nextCaseId)
+      hydratedCaseRef.current = nextCaseId
+      try {
+        const nextUrl = new URL(window.location.href)
+        nextUrl.searchParams.set('case', nextCaseId)
+        window.history.replaceState(null, '', nextUrl.toString())
+      } catch {
+        // Non-fatal: deep link just won't update.
+      }
 
       requestAnimationFrame(() => {
         reportStatusRef.current?.focus({ preventScroll: true })
         reportStatusRef.current?.scrollIntoView({ block: 'start' })
       })
 
-      void analyzeVenue({ caseId: nextCaseId, url: normalizedUrl }).catch((error: unknown) => {
-        console.error('Venue analysis failed', error)
-      })
+      void analyzeVenue({ caseId: nextCaseId, url: normalizedUrl, ownerToken: token }).catch(
+        (error: unknown) => {
+          console.error('Venue analysis failed', error)
+        },
+      )
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : 'Could not start the access check.')
     } finally {
       setIsStarting(false)
+    }
+  }
+
+  async function handleRetry() {
+    if (!caseId || previewMode || isRetrying) return
+    setSubmitError(null)
+    setIsRetrying(true)
+    try {
+      await resetForRetry({ caseId, ownerToken })
+      const researchUrl = bundle?.case.url ?? normalizedUrl
+      await analyzeVenue({ caseId, url: researchUrl, ownerToken })
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Could not retry the access check.')
+    } finally {
+      setIsRetrying(false)
     }
   }
 
@@ -206,7 +357,7 @@ function App() {
     setSendError(null)
     setIsSending(true)
     try {
-      await sendInquiry({ caseId, recipient: recipientEmail.trim() })
+      await sendInquiry({ caseId, recipient: recipientEmail.trim(), ownerToken })
     } catch (error) {
       setSendError(error instanceof Error ? error.message : 'Could not send the venue questions.')
     } finally {
@@ -214,55 +365,171 @@ function App() {
     }
   }
 
+  async function handleSyncReply() {
+    if (!caseId || previewMode || isSyncing) return
+    setSyncMessage(null)
+    setIsSyncing(true)
+    try {
+      const result = await syncLatestReply({ caseId })
+      setSyncMessage(
+        result.found
+          ? 'Venue reply found and applied to the ledger above.'
+          : 'No venue reply found yet. Replies apply automatically when they arrive.',
+      )
+    } catch (error) {
+      setSyncMessage(error instanceof Error ? error.message : 'Could not check for a reply.')
+    } finally {
+      setIsSyncing(false)
+    }
+  }
+
+  async function handleDeleteHistory(target: Id<'cases'>) {
+    setHistoryError(null)
+    try {
+      await removeCase({ caseId: target, ownerToken: ownerTokens[target] })
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : 'Could not delete that check.')
+      return
+    }
+    const nextTokens = { ...readTokenMap() }
+    delete nextTokens[target]
+    writeTokenMap(nextTokens)
+    setOwnerTokens(nextTokens)
+    const nextOrder = readHistoryOrder().filter((id) => id !== target)
+    writeHistoryOrder(nextOrder)
+    setHistoryOrder(nextOrder)
+    if (caseId === target) {
+      setCaseId(null)
+      try {
+        const nextUrl = new URL(window.location.href)
+        nextUrl.searchParams.delete('case')
+        window.history.replaceState(null, '', nextUrl.toString())
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  function openCase(target: Id<'cases'>) {
+    setCaseId(target)
+    hydratedCaseRef.current = null
+    setSubmitError(null)
+    setSendError(null)
+    setSyncMessage(null)
+    try {
+      const nextUrl = new URL(window.location.href)
+      nextUrl.searchParams.set('case', target)
+      window.history.replaceState(null, '', nextUrl.toString())
+    } catch {
+      // ignore
+    }
+    requestAnimationFrame(() => {
+      reportStatusRef.current?.scrollIntoView({ block: 'start' })
+    })
+  }
+
+  async function handleCopyLink() {
+    setShareMessage(null)
+    try {
+      await navigator.clipboard.writeText(window.location.href)
+      setShareMessage('Link copied. Anyone opening it on this browser can view the check.')
+    } catch {
+      setShareMessage('Copy failed — copy the address bar URL manually.')
+    }
+  }
+
+  function handleCopySummary() {
+    setShareMessage(null)
+    const markdown = buildMarkdown(bundle?.case.venueName, bundle?.case.url, requirements)
+    void navigator.clipboard
+      .writeText(markdown)
+      .then(() => setShareMessage('Checklist summary copied as markdown.'))
+      .catch(() => setShareMessage('Copy failed — try Download instead.'))
+  }
+
+  function handleDownload() {
+    const markdown = buildMarkdown(bundle?.case.venueName, bundle?.case.url, requirements)
+    const blob = new Blob([markdown], { type: 'text/markdown' })
+    const href = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = href
+    anchor.download = `accessping-${caseId ?? 'checklist'}.md`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(href)
+  }
+
   const caseStatus = previewMode ? 'ready' : bundle?.case.status
+  const ownershipBlocked = !previewMode && !!caseId && !!deepLinkedCase && caseId === deepLinkedCase && !ownerToken && bundle === null
   const statusHeadline = previewMode
     ? 'Synthetic venue preview'
-    : !bundle
-    ? 'Ready for a venue'
-    : caseStatus === 'queued'
-      ? 'Research queued'
-      : caseStatus === 'researching'
-        ? 'Reading the venue source'
-        : caseStatus === 'ready'
-          ? bundle.case.venueName || 'Source review complete'
-          : 'Research stopped'
+    : ownershipBlocked
+      ? 'Check unavailable here'
+      : !bundle
+        ? 'Ready for a venue'
+        : caseStatus === 'queued'
+          ? 'Research queued'
+          : caseStatus === 'researching'
+            ? 'Reading the venue source'
+            : caseStatus === 'ready'
+              ? bundle.case.venueName || 'Source review complete'
+              : 'Research stopped'
 
   const statusDetail = previewMode
     ? `${confirmedCount} confirmed · ${unknownCount} unverified · ${conflictingCount} conflicting · UI preview only`
-    : !bundle
-    ? 'Add a venue or event URL. The ledger below shows exactly what AccessPing will verify.'
-    : caseStatus === 'queued'
-      ? 'The case is in Convex and waiting for the research action to begin.'
-      : caseStatus === 'researching'
-        ? 'Firecrawl is collecting the source and OpenAI is separating explicit evidence from missing information.'
-        : caseStatus === 'ready'
-          ? `${confirmedCount} confirmed · ${unknownCount} unverified · ${conflictingCount} conflicting`
-          : bundle.case.error || 'The source could not be reviewed. Try the venue URL again.'
+    : ownershipBlocked
+      ? 'This check was created in another browser session and cannot be opened without its ownership token.'
+      : !bundle
+        ? 'Add a venue or event URL. The ledger below shows exactly what AccessPing will verify.'
+        : caseStatus === 'queued'
+          ? 'The case is in Convex and waiting for the research action to begin.'
+          : caseStatus === 'researching'
+            ? 'Checking the venue site and accessibility pages, then separating explicit evidence from missing information.'
+            : caseStatus === 'ready'
+              ? `${confirmedCount} confirmed · ${unknownCount} unverified · ${conflictingCount} conflicting`
+              : bundle.case.error || 'The source could not be reviewed. Try the venue URL again.'
 
   const ledgerNote = previewMode
     ? 'Synthetic state for visual QA only. These rows are not a live venue check and are not submission evidence.'
     : !bundle
-    ? 'All six details will be researched. Mark any that matter most so venue follow-up stays focused.'
-    : caseStatus === 'queued'
-      ? 'All six details are queued for review. Current priorities shape the follow-up view.'
-      : caseStatus === 'researching'
-        ? 'All six details are being checked against the source. Unsupported claims will remain unverified.'
-        : caseStatus === 'ready'
-          ? 'All six details were reviewed. Priorities shape only the follow-up, never the evidence itself.'
-          : 'Research stopped before the ledger could be completed.'
+      ? 'All six details will be researched. Mark any that matter most so venue follow-up stays focused.'
+      : caseStatus === 'queued'
+        ? 'All six details are queued for review. Current priorities shape the follow-up view.'
+        : caseStatus === 'researching'
+          ? 'All six details are being checked against the source. Unsupported claims will remain unverified.'
+          : caseStatus === 'ready'
+            ? 'All six details were reviewed. Priorities shape only the follow-up, never the evidence itself.'
+            : 'Research stopped before the ledger could be completed.'
 
   const caseSource = previewMode ? 'example.com' : bundle ? sourceDomain(bundle.case.url) : null
   const caseTime = previewMode
     ? 'Synthetic'
     : bundle
-    ? new Date(bundle.case.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : null
+      ? new Date(bundle.case.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : null
   const outreachStatus = previewMode ? null : bundle?.outreach?.status
+  const outreachCount = previewMode ? 0 : (bundle?.outreachCount ?? 0)
+  const sendsRemaining = Math.max(0, MAX_SENDS_PER_CASE - outreachCount)
+  const canResend =
+    !previewMode &&
+    bundle &&
+    caseStatus === 'ready' &&
+    unknownCount > 0 &&
+    (outreachStatus === 'failed' ||
+      (outreachStatus === 'replied' && unknownCount > 0) ||
+      (outreachStatus === undefined && false))
   const outreachLocked =
-    outreachStatus === 'pending' || outreachStatus === 'sent' || outreachStatus === 'replied'
+    outreachStatus === 'pending' ||
+    outreachStatus === 'sent' ||
+    (outreachStatus === 'replied' && !canResend)
+  const showFollowup = caseStatus === 'ready' && unknownCount > 0 && !ownershipBlocked
 
   return (
     <main className="app-shell">
+      <a className="skip-link" href="#report-title">
+        Skip to access ledger
+      </a>
       <header className="topbar">
         <a className="brand" href="#top" aria-label="AccessPing home">
           <svg
@@ -271,11 +538,9 @@ function App() {
             aria-hidden="true"
             focusable="false"
           >
-            <path d="M249.00 10.50C254.46 9.64 254.25 9.58 258.47 10.03C262.69 10.48 268.83 11.50 274.31 13.19C279.79 14.88 286.65 17.69 291.34 20.16C296.04 22.62 298.31 24.35 302.50 28.00C306.69 31.65 312.81 37.86 316.47 42.03C320.13 46.20 320.80 47.04 324.47 53.03C328.14 59.03 334.14 68.92 338.50 78.00C342.86 87.08 348.96 102.34 350.62 107.50C352.29 112.66 352.12 108.35 348.47 108.97C344.81 109.58 334.65 109.98 328.69 111.19C322.72 112.39 318.30 113.80 312.69 116.19C307.08 118.58 300.06 122.40 295.03 125.53C290.00 128.67 286.75 131.08 282.50 135.00C278.25 138.92 273.53 143.70 269.53 149.03C265.53 154.36 261.25 161.08 258.50 167.00C255.75 172.92 253.98 179.15 253.03 184.53C252.08 189.92 253.49 195.82 252.81 199.31C252.14 202.80 250.72 203.89 248.97 205.47C247.22 207.05 251.53 206.36 242.31 208.81C233.10 211.27 208.62 215.96 193.69 220.19C178.75 224.42 164.96 229.13 152.69 234.19C140.41 239.24 128.81 245.31 120.03 250.53C111.26 255.76 104.45 261.78 100.03 265.53C95.61 269.28 95.67 269.84 93.53 273.03C91.39 276.22 88.44 280.94 87.19 284.69C85.93 288.43 85.83 292.40 86.00 295.50C86.17 298.60 86.82 300.51 88.19 303.31C89.55 306.11 89.55 307.95 94.19 312.31C98.83 316.67 105.23 322.43 116.03 329.47C126.83 336.51 149.48 348.69 158.97 354.53C168.46 360.38 169.38 361.29 172.97 364.53C176.56 367.78 178.83 370.51 180.50 374.00C182.17 377.49 182.95 382.11 183.00 385.50C183.05 388.89 181.81 391.81 180.81 394.31C179.81 396.81 180.64 396.64 177.00 400.50C173.36 404.36 164.24 413.08 158.97 417.47C153.69 421.86 149.62 424.29 145.34 426.84C141.07 429.40 138.29 431.12 133.31 432.81C128.33 434.50 119.60 436.28 115.47 436.97C111.34 437.66 112.49 437.66 108.53 436.97C104.57 436.28 97.27 434.90 91.69 432.81C86.10 430.73 80.73 427.94 75.03 424.47C69.33 421.00 63.75 417.42 57.50 412.00C51.25 406.58 43.26 398.74 37.53 391.97C31.81 385.19 27.05 378.45 23.16 371.34C19.27 364.23 16.38 356.79 14.19 349.31C12.00 341.83 10.56 333.43 10.03 326.47C9.51 319.51 9.84 314.33 11.03 307.53C12.22 300.73 13.00 295.83 17.19 285.69C21.38 275.54 27.27 262.93 36.16 246.66C45.05 230.38 56.97 209.47 70.53 188.03C84.09 166.59 103.53 137.53 117.53 118.03C131.53 98.53 143.20 84.20 154.53 71.03C165.86 57.86 178.08 46.08 185.50 39.00C192.92 31.92 192.33 32.50 199.03 28.53C205.73 24.56 217.36 18.19 225.69 15.19C234.02 12.18 243.54 11.36 249.00 10.50Z" fill="currentColor" />
+            <path d="M249.00 10.50C254.46 9.64 254.25 9.58 258.47 10.03C262.69 10.48 268.83 11.50 274.31 13.19C279.79 14.88 286.65 17.69 291.34 20.16C296.04 22.62 298.31 24.35 302.50 28.00C306.69 31.65 312.81 37.86 316.47 42.03C320.13 46.20 320.80 47.04 324.47 53.03C328.14 59.03 334.14 68.92 338.50 78.00C342.86 87.08 348.96 102.34 350.62 107.50C352.29 112.66 352.12 108.35 348.47 108.97C344.81 109.58 334.65 109.98 328.69 111.19C322.72 112.39 318.30 113.80 312.69 116.19C307.08 118.58 300.06 122.40 295.03 125.53C290.00 128.67 286.75 131.08 282.50 135.00C278.25 138.92 273.53 143.70 269.53 149.03C265.53 154.36 261.25 161.08 258.50 167.00C255.75 172.92 253.98 179.15 253.03 184.53C252.08 189.92 253.49 195.82 252.81 199.31C252.14 202.80 250.72 203.89 248.97 205.47C247.22 207.05 251.53 206.36 242.31 208.81C233.10 211.27 208.62 215.96 193.69 220.19C178.75 224.42 164.96 229.13 152.69 234.19C140.41 239.24 128.81 245.31 120.03 250.53C111.26 255.76 104.45 261.78 100.03 265.53C95.61 269.28 95.67 269.84 93.53 273.03C91.39 276.22 88.44 280.94 87.19 284.69C85.93 288.43 85.83 292.40 86.00 295.50C86.17 298.60 86.82 300.51 88.19 303.31C89.55 306.11 89.55 307.95 94.19 312.31C98.83 316.67 105.23 322.43 116.03 329.47C126.83 336.51 149.48 348.69 158.97 354.53C168.46 360.38 169.38 361.29 172.97 364.53C176.56 367.78 178.83 370.51 180.50 374.00C182.17 377.49 182.95 382.11 183.00 385.50C183.05 388.89 181.81 391.81 180.81 394.31C179.81 396.81 180.64 396.64 177.00 400.50C173.36 404.36 164.24 413.08 158.97 417.47C153.69 421.86 149.62 424.29 145.34 426.84C141.07 429.40 138.29 431.12 133.31 432.81C128.33 434.50 119.60 436.28 115.47 436.97C111.34 437.66 112.49 437.66 108.53 436.97C104.57 436.28 97.27 434.90 91.69 432.81C86.10 430.73 80.73 427.94 75.03 424.47C69.33 421.00 63.75 417.42 57.50 412.00C51.25 406.58 43.26 398.74 37.53 391.97C31.81 385.19 27.05 378.45 23.16 371.34C19.27 364.23 16.38 356.79 14.19 349.31C12.00 341.83 10.56 333.43 10.03 326.47C9.51 319.51 9.84 314.33 11.03 307.53L249.00 10.50Z" fill="currentColor" />
             <path d="M258.97 238.53C265.29 238.53 272.39 238.45 279.47 239.03C286.55 239.61 291.49 239.67 301.47 242.03C311.44 244.39 330.17 250.00 339.31 253.19C348.46 256.38 350.73 258.10 356.34 261.16C361.95 264.21 367.94 268.06 372.97 271.53C377.99 275.01 381.08 276.92 386.50 282.00C391.92 287.08 400.24 295.59 405.47 302.03C410.69 308.47 414.45 314.88 417.84 320.66C421.23 326.43 422.98 329.35 425.81 336.69C428.64 344.03 432.79 356.55 434.81 364.69C436.84 372.83 437.44 378.90 437.97 385.53C438.49 392.16 438.49 398.34 437.97 404.47C437.44 410.60 436.67 416.33 434.81 422.31C432.96 428.29 429.15 436.15 426.84 440.34C424.54 444.54 423.20 445.70 420.97 447.47C418.74 449.24 415.88 450.71 413.47 450.97C411.06 451.22 411.67 455.49 406.50 449.00C401.33 442.51 389.55 421.78 382.47 412.03C375.39 402.28 371.92 398.58 364.00 390.50C356.08 382.42 343.81 370.86 334.97 363.53C326.13 356.20 319.41 351.93 310.97 346.53C302.53 341.14 293.79 336.05 284.34 331.16C274.90 326.27 263.15 321.02 254.31 317.19C245.47 313.36 244.58 312.75 231.31 308.19C218.04 303.62 185.73 293.60 174.69 289.81C163.64 286.03 167.39 286.94 165.03 285.47C162.67 283.99 161.70 282.80 160.53 280.97C159.36 279.14 158.00 276.82 158.00 274.50C158.00 272.18 159.03 269.36 160.53 267.03C162.04 264.70 164.01 262.67 167.03 260.53C170.06 258.39 174.74 256.08 178.69 254.19C182.63 252.30 184.02 251.19 190.69 249.19C197.35 247.19 210.21 243.88 218.69 242.19C227.16 240.49 234.82 239.64 241.53 239.03C248.24 238.42 252.65 238.53 258.97 238.53Z" fill="currentColor" />
             <path d="M466.00 45.50C468.88 44.94 473.98 44.52 477.31 45.19C480.64 45.86 482.61 46.56 485.97 49.53C489.33 52.51 493.99 58.34 497.47 63.03C500.95 67.72 503.29 71.38 506.84 77.66C510.40 83.93 515.32 92.68 518.81 100.69C522.31 108.69 525.48 118.02 527.81 125.69C530.15 133.35 531.62 140.38 532.81 146.69C534.01 152.99 534.60 156.56 534.97 163.53C535.33 170.50 535.17 182.68 535.00 188.50C534.83 194.32 534.50 194.67 533.97 198.47C533.44 202.27 533.17 205.51 531.81 211.31C530.45 217.12 528.64 225.31 525.81 233.31C522.98 241.32 518.73 251.57 514.84 259.34C510.95 267.12 505.95 274.61 502.47 279.97C498.99 285.32 496.80 288.80 493.97 291.47C491.14 294.14 488.52 295.24 485.47 295.97C482.42 296.69 478.43 296.40 475.69 295.81C472.95 295.23 470.95 293.88 469.03 292.47C467.11 291.06 465.49 289.68 464.16 287.34C462.82 285.01 461.19 281.41 461.03 278.47C460.87 275.53 460.05 275.38 463.19 269.69C466.32 264.00 475.57 251.91 479.84 244.34C484.11 236.78 486.48 230.48 488.81 224.31C491.14 218.14 492.45 213.95 493.81 207.31C495.18 200.68 496.47 190.63 497.00 184.50C497.53 178.37 497.47 176.53 496.97 170.53C496.46 164.54 495.83 156.51 493.97 148.53C492.11 140.56 489.23 131.10 485.81 122.69C482.40 114.27 477.03 104.31 473.47 98.03C469.91 91.76 467.29 88.71 464.47 85.03C461.65 81.35 458.58 78.92 456.53 75.97C454.48 73.02 452.91 69.69 452.19 67.31C451.46 64.93 451.63 64.07 452.19 61.69C452.74 59.31 454.22 55.22 455.53 53.03C456.84 50.84 458.29 49.79 460.03 48.53C461.78 47.28 463.12 46.06 466.00 45.50Z" fill="var(--color-accent)" />
-            <path d="M424.00 92.50C426.61 92.17 428.82 92.35 431.31 93.19C433.81 94.03 436.28 95.06 438.97 97.53C441.66 100.01 445.16 104.84 447.47 108.03C449.78 111.22 450.45 112.05 452.84 116.66C455.23 121.27 459.82 131.02 461.81 135.69C463.81 140.36 463.62 140.05 464.81 144.69C466.01 149.33 468.11 158.39 468.97 163.53C469.83 168.67 470.16 169.73 469.97 175.53C469.78 181.33 469.01 191.52 467.81 198.31C466.62 205.11 464.48 211.31 462.81 216.31C461.15 221.31 460.70 223.04 457.81 228.31C454.92 233.59 448.28 243.94 445.47 247.97C442.66 251.99 442.97 251.14 440.97 252.47C438.97 253.80 435.85 255.41 433.47 255.97C431.09 256.53 429.09 256.40 426.69 255.81C424.28 255.23 421.28 254.22 419.03 252.47C416.78 250.72 414.46 247.81 413.19 245.31C411.91 242.82 411.54 239.60 411.38 237.50C411.21 235.40 411.56 234.49 412.19 232.69C412.82 230.88 413.61 229.11 415.16 226.66C416.70 224.20 419.53 221.19 421.47 217.97C423.41 214.74 425.26 211.26 426.81 207.31C428.37 203.37 429.79 199.12 430.81 194.31C431.84 189.51 432.97 184.07 432.97 178.47C432.97 172.86 431.84 165.82 430.81 160.69C429.79 155.56 428.20 151.46 426.81 147.69C425.42 143.91 424.03 140.97 422.47 138.03C420.91 135.09 419.46 132.71 417.47 130.03C415.48 127.35 412.27 124.56 410.53 121.97C408.79 119.38 407.59 117.02 407.03 114.47C406.47 111.92 406.77 108.93 407.19 106.69C407.60 104.45 408.12 102.95 409.53 101.03C410.94 99.11 413.24 96.58 415.66 95.16C418.07 93.73 421.39 92.83 424.00 92.50Z" fill="var(--color-accent)" />
-            <path d="M337.00 137.50C341.44 137.00 349.43 136.57 354.31 137.19C359.20 137.80 363.37 139.96 366.31 141.19C369.26 142.41 369.19 142.31 371.97 144.53C374.75 146.75 380.42 151.75 383.00 154.50C385.58 157.25 386.17 158.67 387.47 161.03C388.77 163.40 389.90 165.77 390.81 168.69C391.73 171.60 392.61 175.07 392.97 178.53C393.33 181.99 393.16 186.67 392.97 189.47C392.78 192.27 392.39 193.22 391.81 195.31C391.23 197.40 390.89 199.06 389.50 202.00C388.11 204.94 385.89 209.72 383.47 212.97C381.05 216.21 377.49 219.32 374.97 221.47C372.45 223.61 370.95 224.45 368.34 225.84C365.73 227.23 362.62 228.79 359.31 229.81C356.00 230.83 351.60 231.61 348.47 231.97C345.34 232.33 343.83 232.49 340.53 231.97C337.23 231.44 332.94 230.73 328.69 228.81C324.44 226.90 319.12 224.21 315.03 220.47C310.94 216.72 306.82 211.51 304.16 206.34C301.49 201.18 299.89 194.27 299.03 189.47C298.18 184.67 298.84 180.33 299.03 177.53C299.22 174.73 299.49 174.99 300.19 172.69C300.88 170.38 301.96 166.46 303.19 163.69C304.41 160.91 305.65 158.65 307.53 156.03C309.42 153.42 312.25 150.08 314.50 148.00C316.75 145.92 318.83 144.83 321.03 143.53C323.23 142.23 325.03 141.19 327.69 140.19C330.35 139.18 332.56 138.00 337.00 137.50Z" fill="var(--color-accent)" />
           </svg>
           <span className="brand-wordmark" aria-hidden="true">
             <span className="brand-wordmark__access">Access</span>
@@ -283,6 +548,14 @@ function App() {
           </span>
         </a>
         <p className="product-note">Evidence-first venue accessibility checks</p>
+        <p
+          className="auth-note"
+          role="status"
+          aria-live="polite"
+          title="AccessPing signs you in anonymously so your checks are owned by your account."
+        >
+          {isAuthenticated ? 'Signed in' : 'Signing in…'}
+        </p>
       </header>
 
       <div className="workbench" id="top">
@@ -325,8 +598,49 @@ function App() {
             >
               {previewMode ? 'Preview only' : isStarting ? 'Starting research…' : 'Check this venue'}
             </button>
-            {submitError && <p className="error-message">{submitError}</p>}
+            {submitError && (
+              <p className="error-message" role="alert">
+                {submitError}
+              </p>
+            )}
           </form>
+
+          {!previewMode && historyOrder.length > 0 && (
+            <section className="history" aria-label="Recent checks">
+              <h2>Recent checks</h2>
+              {historyError && (
+                <p className="error-message" role="alert">
+                  {historyError}
+                </p>
+              )}
+              {!history ? (
+                <p className="history-empty">Loading recent checks…</p>
+              ) : history.length === 0 ? (
+                <p className="history-empty">No saved checks on this browser yet.</p>
+              ) : (
+                <ul>
+                  {history.map((item) => (
+                    <li key={item.caseId} className={item.caseId === caseId ? 'is-active' : ''}>
+                      <button type="button" onClick={() => openCase(item.caseId as Id<'cases'>)}>
+                        <span className="history-title">{item.venueName || item.url}</span>
+                        <span className="history-meta">
+                          {item.status} · {item.confirmed} confirmed · {item.unknown} unverified
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="history-delete"
+                        onClick={() => void handleDeleteHistory(item.caseId as Id<'cases'>)}
+                        aria-label={`Delete check for ${item.venueName || item.url}`}
+                      >
+                        ×
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
 
           <div className="trust-note">
             <span className="trust-note__mark" aria-hidden="true">↳</span>
@@ -334,7 +648,11 @@ function App() {
           </div>
         </aside>
 
-        <section className="report-panel" aria-labelledby="report-title">
+        <section
+          className="report-panel"
+          aria-labelledby="report-title"
+          aria-busy={caseStatus === 'researching' || caseStatus === 'queued'}
+        >
           <header className="report-head">
             <div className="report-head__copy">
               {previewMode && (
@@ -356,6 +674,13 @@ function App() {
               ) : bundle?.case.url ? (
                 <p className="report-url">{bundle.case.url}</p>
               ) : null}
+              {bundle?.case.researchSources && bundle.case.researchSources.length > 0 && (
+                <p className="report-sources">
+                  Researched {bundle.case.researchSources.length} page
+                  {bundle.case.researchSources.length === 1 ? '' : 's'}
+                  {bundle.case.researchModel ? ` · ${bundle.case.researchModel}` : ''}
+                </p>
+              )}
             </div>
 
             {(bundle || previewMode) && (
@@ -383,6 +708,42 @@ function App() {
           <div className="ledger-note">
             <p>{ledgerNote}</p>
           </div>
+
+          {caseStatus === 'failed' && !previewMode && (
+            <div className="retry-bar">
+              <p>{bundle?.case.error ?? 'Research stopped before the ledger could be completed.'}</p>
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={() => void handleRetry()}
+                disabled={isRetrying}
+              >
+                {isRetrying ? 'Retrying…' : 'Retry research'}
+              </button>
+            </div>
+          )}
+
+          {(bundle || previewMode) && caseStatus !== 'failed' && (
+            <div className="share-bar">
+              <button type="button" className="share-action" onClick={() => void handleCopyLink()}>
+                Copy link
+              </button>
+              <button type="button" className="share-action" onClick={handleCopySummary}>
+                Copy summary
+              </button>
+              <button type="button" className="share-action" onClick={handleDownload}>
+                Download .md
+              </button>
+              <button type="button" className="share-action" onClick={() => window.print()}>
+                Print
+              </button>
+              {shareMessage && (
+                <p className="share-message" role="status">
+                  {shareMessage}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="ledger-head" aria-hidden="true">
             <span>Access detail</span>
@@ -446,7 +807,7 @@ function App() {
                             <p className="answer">{item.answer}</p>
                           ) : (
                             <p className="requirement-row__note">
-                              {caseStatus === 'researching'
+                              {caseStatus === 'researching' || caseStatus === 'queued'
                                 ? 'Checking the source…'
                                 : caseStatus === 'failed'
                                   ? 'Not reviewed because research stopped.'
@@ -456,7 +817,7 @@ function App() {
                           {item.evidence && (
                             <div className="evidence">
                               <p className="evidence__label">
-                                {item.status === 'confirmed_venue' ? 'Venue reply evidence' : 'Source evidence'}
+                                {item.status === 'confirmed_venue' ? 'Venue reply evidence' : item.status === 'conflicting' ? 'Conflicting evidence — needs review' : 'Source evidence'}
                                 {domain ? ` · ${domain}` : ''}
                               </p>
                               <blockquote><p>{item.evidence}</p></blockquote>
@@ -488,7 +849,7 @@ function App() {
             )}
           </div>
 
-          {caseStatus === 'ready' && unknownCount > 0 && (
+          {showFollowup && (
             <aside className="followup" aria-label="Venue follow-up">
               <div>
                 <h3>
@@ -498,6 +859,9 @@ function App() {
                 </h3>
                 <p>
                   AccessPing can turn the remaining unverified details into one focused venue message.
+                  {sendsRemaining < MAX_SENDS_PER_CASE
+                    ? ` ${sendsRemaining} of ${MAX_SENDS_PER_CASE} venue messages remaining for this check.`
+                    : ''}
                 </p>
               </div>
               <button
@@ -543,21 +907,46 @@ function App() {
                       >
                         {isSending
                           ? 'Sending…'
-                          : outreachStatus === 'replied'
-                            ? 'Venue replied'
-                            : outreachLocked
-                              ? 'Questions sent'
-                              : 'Send questions'}
+                          : outreachStatus === 'replied' && canResend
+                            ? 'Send follow-up'
+                            : outreachStatus === 'replied'
+                              ? 'Venue replied'
+                              : outreachLocked
+                                ? 'Questions sent'
+                                : 'Send questions'}
                       </button>
 
-                      {sendError && <p className="outreach-message outreach-message--error">{sendError}</p>}
+                      {sendError && (
+                        <p className="outreach-message outreach-message--error" role="alert">
+                          {sendError}
+                        </p>
+                      )}
                       {bundle?.outreach && !sendError && (
-                        <p className={`outreach-message outreach-message--${bundle.outreach.status}`}>
+                        <p
+                          className={`outreach-message outreach-message--${bundle.outreach.status}`}
+                          role="status"
+                          aria-live="polite"
+                        >
                           {bundle.outreach.status === 'replied'
                             ? 'Venue reply received. Any explicitly answered details update in the ledger above.'
                             : bundle.outreach.status === 'failed'
                               ? 'Delivery failed. Check the address and try again.'
                               : `Sent to ${bundle.outreach.recipient}. Waiting for the venue reply.`}
+                        </p>
+                      )}
+                      {bundle?.outreach && bundle.outreach.status === 'sent' && (
+                        <button
+                          type="button"
+                          className="share-action"
+                          onClick={() => void handleSyncReply()}
+                          disabled={isSyncing}
+                        >
+                          {isSyncing ? 'Checking…' : 'Check for reply now'}
+                        </button>
+                      )}
+                      {syncMessage && (
+                        <p className="outreach-message" role="status">
+                          {syncMessage}
                         </p>
                       )}
                     </form>

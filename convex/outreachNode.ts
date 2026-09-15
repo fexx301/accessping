@@ -31,17 +31,19 @@ const REPLY_INSTRUCTIONS = `
 You extract only accessibility answers explicitly provided by a venue in an email reply.
 
 Rules:
-1. Only return an update when the reply explicitly answers that access detail.
+1. Only return an update when the reply explicitly answers that access detail — including an explicit negative ("we do not have...").
 2. Do not infer an answer from silence, tone, or general statements.
 3. answer should be a concise user-facing summary of what the venue confirmed, including a negative answer if the venue explicitly says a feature is unavailable.
 4. evidence should be a short faithful excerpt or close paraphrase from the venue reply.
-5. Do not add keys that were not listed as currently unverified.
+5. Do not add keys that were not listed as currently needing review.
 6. If the reply answers nothing relevant, return an empty updates array.
 `
 
 export const extractVenueReply = internalAction({
   args: {
-    context: v.array(v.object({ key: v.string(), label: v.string() })),
+    context: v.array(
+      v.object({ key: v.string(), label: v.string(), status: v.optional(v.string()) }),
+    ),
     text: v.string(),
   },
   handler: async (_ctx, { context, text }) => {
@@ -54,7 +56,7 @@ export const extractVenueReply = internalAction({
       model: env.OPENAI_MODEL || 'gpt-5.6-luna',
       reasoning: { effort: 'low' },
       instructions: REPLY_INSTRUCTIONS,
-      input: `Currently unverified details:\n${context.map((item) => `- ${item.key}: ${item.label}`).join('\n')}\n\nVenue reply:\n${text}`,
+      input: `Details needing review:\n${context.map((item) => `- ${item.key}: ${item.label}${item.status ? ` (current: ${item.status})` : ''}`).join('\n')}\n\nVenue reply:\n${text}`,
       text: { format: zodTextFormat(VenueReply, 'venue_reply_accessibility_updates') },
     })
 
