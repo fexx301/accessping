@@ -15,7 +15,7 @@
 - **Auth:** anonymous Convex Auth sessions — every visitor auto-signs in, cases are stamped with the auth user id, and reads/mutations enforce owner-or-token access
 - **AI models:** gpt-5.6-luna
 - **Started:** 2026-09-14T18:02:49Z
-- **Last updated:** 2026-09-15T03:45:00Z
+- **Last updated:** 2026-09-15T04:10:00Z
 
 ## Log
 
@@ -42,3 +42,6 @@ Closed the end-to-end review gaps: per-case ownership tokens with server enforce
 
 ### 2026-09-15 - judging-criteria
 Closed the judging-criteria gaps: anonymous Convex Auth sessions own every check (`convex/auth.ts`, `convex/auth.config.ts`, auth tables, `cases.userId`, `myCases`), Firecrawl research became real site discovery — entry scrape with links plus `map`, keyword-ranked same-origin follow-up scrapes up to five sourced pages (`convex/research.ts`, shared ranking in `convex/guards.ts` with unit tests) — and the build log now states the full component and feature surface.
+
+### 2026-09-15 - prod-deploy
+Deployed to production: backend (`npx convex deploy`) with auth tables and `cases.by_userId`, fresh prod auth keys (`SITE_URL`, `JWT_PRIVATE_KEY`, `JWKS`), anonymous `auth:signIn` verified returning RS256 tokens, and frontend rebuilt against the prod deployment (`static-hosting deploy --skip-convex`). Live at https://greedy-duck-315.convex.site (`/` and `/health` 200, new SEO title serving).
