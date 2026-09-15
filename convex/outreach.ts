@@ -1,6 +1,3 @@
-import OpenAI from 'openai'
-import { zodTextFormat } from 'openai/helpers/zod'
-import { z } from 'zod'
 import { v } from 'convex/values'
 import {
   action,
@@ -38,30 +35,6 @@ const questionBank: Record<RequirementKey, string> = {
     'Do you provide hearing or communication support such as a hearing loop, captions, or signing?',
   quiet_space: 'Is there a quiet or low-sensory space available for visitors who need one?',
 }
-
-const VenueReply = z.object({
-  updates: z
-    .array(
-      z.object({
-        key: z.enum(requirementKeys),
-        answer: z.string(),
-        evidence: z.string(),
-      }),
-    )
-    .max(6),
-})
-
-const REPLY_INSTRUCTIONS = `
-You extract only accessibility answers explicitly provided by a venue in an email reply.
-
-Rules:
-1. Only return an update when the reply explicitly answers that access detail.
-2. Do not infer an answer from silence, tone, or general statements.
-3. answer should be a concise user-facing summary of what the venue confirmed, including a negative answer if the venue explicitly says a feature is unavailable.
-4. evidence should be a short faithful excerpt or close paraphrase from the venue reply.
-5. Do not add keys that were not listed as currently unverified.
-6. If the reply answers nothing relevant, return an empty updates array.
-`
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null
@@ -403,21 +376,12 @@ export const processVenueReply = internalAction({
     )
     if (context.length === 0) return null
 
-    const openai = new OpenAI({
-      apiKey: env.OPENAI_API_KEY,
-      baseURL: env.OPENAI_BASE_URL || undefined,
-    })
-    const response = await openai.responses.parse({
-      model: env.OPENAI_MODEL || 'gpt-5.6-luna',
-      reasoning: { effort: 'low' },
-      instructions: REPLY_INSTRUCTIONS,
-      input: `Currently unverified details:\n${context.map((item) => `- ${item.key}: ${item.label}`).join('\n')}\n\nVenue reply:\n${text.slice(0, 30_000)}`,
-      text: { format: zodTextFormat(VenueReply, 'venue_reply_accessibility_updates') },
-    })
-    if (!response.output_parsed) return null
-
     const allowed = new Set(context.map((item) => item.key))
-    const updates = response.output_parsed.updates
+    const extracted = await ctx.runAction(internal.outreachNode.extractVenueReply, {
+      context,
+      text: text.slice(0, 30_000),
+    })
+    const updates = extracted.updates
       .filter((item) => allowed.has(item.key))
       .map((item) => ({
         key: item.key,

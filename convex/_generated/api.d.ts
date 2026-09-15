@@ -12,7 +12,9 @@ import type * as cases from "../cases.js";
 import type * as emailCallbacks from "../emailCallbacks.js";
 import type * as http from "../http.js";
 import type * as outreach from "../outreach.js";
+import type * as outreachNode from "../outreachNode.js";
 import type * as research from "../research.js";
+import type * as researchNode from "../researchNode.js";
 
 import type {
   ApiFromModules,
@@ -25,7 +27,9 @@ declare const fullApi: ApiFromModules<{
   emailCallbacks: typeof emailCallbacks;
   http: typeof http;
   outreach: typeof outreach;
+  outreachNode: typeof outreachNode;
   research: typeof research;
+  researchNode: typeof researchNode;
 }>;
 
 /**
