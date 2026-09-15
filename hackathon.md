@@ -45,3 +45,6 @@ Closed the judging-criteria gaps: anonymous Convex Auth sessions own every check
 
 ### 2026-09-15 - prod-deploy
 Deployed to production: backend (`npx convex deploy`) with auth tables and `cases.by_userId`, fresh prod auth keys (`SITE_URL`, `JWT_PRIVATE_KEY`, `JWKS`), anonymous `auth:signIn` verified returning RS256 tokens, and frontend rebuilt against the prod deployment (`static-hosting deploy --skip-convex`). Live at https://greedy-duck-315.convex.site (`/` and `/health` 200, new SEO title serving).
+
+### 2026-09-15 - prod-smoke-2
+Fresh prod smoke on the new stack: created a case for https://www.barbican.org.uk via CLI, `research:analyzeVenue` completed first attempt — entry scrape + `map` discovery + keyword-ranked follow-ups produced 5 sourced pages (entry, `/accessibility`, `/access`, `your-visit/accessibility/access-guides`, `your-visit/accessibility/accessible-facilities`), venue resolved as “Barbican Centre”, 4 rows `confirmed_web` with per-page `sourceUrl` (step-free, toilet, parking/drop-off, hearing), 2 rows honestly `unknown` (seating, quiet space), both priority flags preserved, model recorded. Report header now renders the researched pages as clickable source links (`src/App.tsx`, `src/App.css`). Smoke case deleted after verification.

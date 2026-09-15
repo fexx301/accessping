@@ -99,6 +99,17 @@ const previewRequirements: DisplayRequirement[] = [
 const TOKENS_KEY = 'accessping:tokens:v1'
 const HISTORY_KEY = 'accessping:history:v1'
 
+function sourceLabel(sourceUrl: string) {
+  try {
+    const parsed = new URL(sourceUrl)
+    const path = parsed.pathname === '/' ? '' : parsed.pathname
+    const label = `${parsed.hostname.replace(/^www\./, '')}${path}`
+    return label.length > 48 ? `${label.slice(0, 47)}…` : label
+  } catch {
+    return sourceUrl
+  }
+}
+
 function sourceDomain(sourceUrl?: string) {
   if (!sourceUrl) return null
   try {
@@ -675,11 +686,22 @@ function App() {
                 <p className="report-url">{bundle.case.url}</p>
               ) : null}
               {bundle?.case.researchSources && bundle.case.researchSources.length > 0 && (
-                <p className="report-sources">
-                  Researched {bundle.case.researchSources.length} page
-                  {bundle.case.researchSources.length === 1 ? '' : 's'}
-                  {bundle.case.researchModel ? ` · ${bundle.case.researchModel}` : ''}
-                </p>
+                <details className="report-sources">
+                  <summary>
+                    Researched {bundle.case.researchSources.length} page
+                    {bundle.case.researchSources.length === 1 ? '' : 's'}
+                    {bundle.case.researchModel ? ` · ${bundle.case.researchModel}` : ''}
+                  </summary>
+                  <ul>
+                    {bundle.case.researchSources.map((source) => (
+                      <li key={source.url}>
+                        <a href={source.url} target="_blank" rel="noreferrer">
+                          {sourceLabel(source.url)}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               )}
             </div>
 

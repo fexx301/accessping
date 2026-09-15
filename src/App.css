@@ -841,6 +841,50 @@
   font-weight: 650;
 }
 
+.report-sources summary {
+  cursor: pointer;
+  display: inline-flex;
+  min-height: 1.75rem;
+  align-items: center;
+}
+
+.report-sources summary:hover {
+  color: var(--color-accent-dark);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.report-sources summary:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.report-sources ul {
+  list-style: none;
+  margin: var(--space-2xs) 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.report-sources a {
+  color: var(--color-accent-dark);
+  font-weight: 700;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.report-sources a:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.report-sources a:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
 @media print {
   .control-rail,
   .share-bar,
