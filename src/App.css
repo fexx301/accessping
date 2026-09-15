@@ -62,8 +62,8 @@
 }
 
 .brand-icon {
+  width: 2.24rem;
   height: 2.1rem;
-  width: auto;
   display: block;
   flex: 0 0 auto;
   color: var(--color-ink);
