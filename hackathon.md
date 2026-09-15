@@ -51,3 +51,6 @@ Fresh prod smoke on the new stack: created a case for https://www.barbican.org.u
 
 ### 2026-09-15 - v2-monitor-share
 Stronger ship: weekly venue re-verification (`convex/recheck.ts`, `convex/crons.ts` — re-scrapes researched sources, diffs statuses with `diffRecheck`, flips vanished/changed evidence to `conflicting`, emails opted-in owners via AgentMail), evidence screenshots to Convex file storage with thumbnails (`convex/research.ts`, `cases.getScreenshotUrl`), public read-only `?share=` pages (`cases.getSharedBundle`, `ensureShareToken`, `SharedLedger`), opt-in owner emails for completion/reply/recheck (`cases.ownerEmail`, `outreach.sendOwnerEmail`), MIT license, unit tests for the recheck diff.
+
+### 2026-09-15 - v2-smoke
+Verified v2 on prod with Tate Modern: 5 sourced pages discovered, all six rows confirmed with per-page sources, `shareToken` minted, viewport screenshot stored in file storage and serving, `getSharedBundle` returns all 6 rows with no owner-email leak, `getScreenshotUrl` resolves via share token. Smoke case deleted.
