@@ -12,6 +12,40 @@ const MAX_PAGES = 5
 const CHARS_PER_PAGE = 30_000
 const MAX_COMBINED_CHARS = 80_000
 
+const MAX_SCREENSHOT_BYTES = 4_000_000
+
+type StorageCapable = { storage: { store: (blob: Blob) => Promise<Id<'_storage'>> } }
+
+function blobFromDataUrl(ref: string): Blob | null {
+  const match = ref.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/)
+  if (!match) return null
+  try {
+    const binary = atob(match[2])
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    return new Blob([bytes.buffer as ArrayBuffer], { type: match[1] })
+  } catch {
+    return null
+  }
+}
+
+async function storeScreenshot(ctx: StorageCapable, ref: string): Promise<Id<'_storage'>> {
+  let blob: Blob | null = null
+  if (ref.startsWith('data:')) {
+    blob = blobFromDataUrl(ref)
+    if (!blob) throw new Error('Unrecognised screenshot data URL.')
+  } else {
+    const response = await fetch(ref)
+    if (!response.ok) throw new Error(`Screenshot fetch failed: ${response.status}`)
+    const contentType = response.headers.get('content-type') ?? ''
+    if (!contentType.startsWith('image/')) throw new Error('Screenshot is not an image.')
+    blob = await response.blob()
+  }
+  if (!blob || blob.size === 0) throw new Error('Empty screenshot.')
+  if (blob.size > MAX_SCREENSHOT_BYTES) throw new Error('Screenshot too large.')
+  return ctx.storage.store(blob)
+}
+
 export const analyzeVenue = action({
   args: { caseId: v.id('cases'), url: v.string(), ownerToken: v.optional(v.string()) },
   handler: async (ctx, { caseId, url, ownerToken }): Promise<{ caseId: Id<'cases'> }> => {
@@ -26,15 +60,20 @@ export const analyzeVenue = action({
       }
 
       // Phase 1 — scrape the submitted page with link discovery on.
+      // A viewport screenshot is captured best-effort for the evidence file.
       let mainMarkdown = ''
+      let mainScreenshot: string | undefined
       let discovered: string[] = []
       try {
         const main = await firecrawl.scrape(ctx, url, {
-          formats: ['markdown', 'links'],
+          formats: ['markdown', 'links', 'screenshot'],
           onlyMainContent: true,
           maxAge: 60 * 60 * 1000,
         })
         mainMarkdown = main.markdown?.trim() ?? ''
+        if (typeof main.screenshot === 'string' && main.screenshot.length > 0) {
+          mainScreenshot = main.screenshot
+        }
         if (Array.isArray(main.links)) {
           discovered.push(...main.links.filter((l): l is string => typeof l === 'string'))
         }
@@ -125,10 +164,48 @@ export const analyzeVenue = action({
         sourceUrls: pages.map((p) => p.url),
       })
 
+      // Evidence screenshot → Convex file storage. Best-effort: a missing or
+      // oversized screenshot never fails the research itself.
+      let screenshotId: Id<'_storage'> | undefined
+      if (mainScreenshot) {
+        try {
+          screenshotId = await storeScreenshot(ctx, mainScreenshot)
+        } catch (error) {
+          console.warn('Evidence screenshot skipped', error)
+        }
+      }
+
       await ctx.runMutation(internal.research.saveAnalysis, {
         caseId,
         analysis: normalizedAnalysis,
+        screenshotId,
       })
+
+      // Opt-in completion email for owners who left an address.
+      try {
+        const notify = await ctx.runQuery(internal.cases.getNotifyContext, { caseId })
+        if (notify?.ownerEmail) {
+          const confirmed = normalizedAnalysis.requirements.filter(
+            (r) => r.status === 'confirmed_web',
+          ).length
+          const unknown = normalizedAnalysis.requirements.filter(
+            (r) => r.status === 'unknown',
+          ).length
+          await ctx.runAction(internal.outreach.sendOwnerEmail, {
+            to: notify.ownerEmail,
+            subject: `AccessPing: review complete for ${notify.venueName ?? 'your venue'}`,
+            text: [
+              `AccessPing finished reviewing ${notify.url}.`,
+              `${confirmed} confirmed · ${unknown} unverified · ${normalizedAnalysis.requirements.length - confirmed - unknown} conflicting.`,
+              '',
+              'Open your check to review the evidence and send follow-up questions for anything still unverified.',
+            ].join('\n'),
+            label: `accessping-complete:${caseId}`,
+          })
+        }
+      } catch (error) {
+        console.warn('Completion email skipped', error)
+      }
 
       return { caseId }
     } catch (error) {
@@ -168,6 +245,7 @@ export const markResearching = internalMutation({
 export const saveAnalysis = internalMutation({
   args: {
     caseId: v.id('cases'),
+    screenshotId: v.optional(v.id('_storage')),
     analysis: v.object({
       venueName: v.union(v.string(), v.null()),
       requirements: v.array(
@@ -188,9 +266,8 @@ export const saveAnalysis = internalMutation({
       model: v.optional(v.string()),
     }),
   },
-  handler: async (ctx, { caseId, analysis }) => {
-    const now = Date.now()
-    // Preserve row identity: patch existing rows by key instead of
+  handler: async (ctx, { caseId, analysis, screenshotId }) => {
+    const now = Date.now()    // Preserve row identity: patch existing rows by key instead of
     // delete+reinsert so realtime keys stay stable.
     const existing = await ctx.db
       .query('requirements')
@@ -224,6 +301,7 @@ export const saveAnalysis = internalMutation({
       error: undefined,
       researchSources: analysis.sources,
       researchModel: analysis.model,
+      ...(screenshotId ? { screenshotId } : {}),
       updatedAt: now,
     })
   },

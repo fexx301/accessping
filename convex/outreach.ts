@@ -135,6 +135,25 @@ export const ensureInbox = action({
   handler: async (ctx): Promise<InboxSetting> => getOrCreateInbox(ctx),
 })
 
+// Owner notifications (opt-in completion / reply / recheck alerts).
+export const sendOwnerEmail = internalAction({
+  args: { to: v.string(), subject: v.string(), text: v.string(), label: v.string() },
+  handler: async (ctx, { to, subject, text, label }): Promise<null> => {
+    if (!isValidEmail(to)) return null
+    const inbox = await getOrCreateInbox(ctx)
+    await agentMailFetch(`/inboxes/${encodeURIComponent(inbox.inboxId)}/messages/send`, {
+      method: 'POST',
+      body: {
+        to,
+        subject,
+        text: `${text}\n\n—\nYou asked AccessPing for updates on this check.`,
+        labels: ['accessping', label],
+      },
+    })
+    return null
+  },
+})
+
 export const getInboxSetting = internalQuery({
   args: {},
   handler: async (ctx): Promise<InboxSetting | null> => {
@@ -446,6 +465,24 @@ export const processVenueReply = internalAction({
 
     if (updates.length > 0) {
       await ctx.runMutation(internal.outreach.applyVenueReply, { caseId, updates })
+      // Opt-in reply notification for the case owner.
+      try {
+        const notify = await ctx.runQuery(internal.cases.getNotifyContext, { caseId })
+        if (notify?.ownerEmail) {
+          await ctx.runAction(internal.outreach.sendOwnerEmail, {
+            to: notify.ownerEmail,
+            subject: `AccessPing: venue replied about ${notify.venueName ?? 'your venue'}`,
+            text: [
+              `The venue replied and AccessPing updated ${updates.length} checklist item${updates.length === 1 ? '' : 's'}:`,
+              '',
+              ...updates.map((u) => `• ${u.key}: ${u.answer}`),
+            ].join('\n'),
+            label: `accessping-reply:${caseId}`,
+          })
+        }
+      } catch (error) {
+        console.warn('Reply notification skipped', error)
+      }
     }
     return null
   },

@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   classifyReplyUpdate,
+  diffRecheck,
   isValidEmail,
   isValidHttpUrl,
   normalizeUrl,
@@ -97,5 +98,40 @@ describe('sameOriginOnly', () => {
       'https://venue.example',
     )
     assert.deepEqual(out, ['https://venue.example/accessibility'])
+  })
+})
+
+describe('diffRecheck', () => {
+  it('upgrades new confirmations, flags vanished evidence, never touches venue rows', () => {
+    const changes = diffRecheck(
+      [
+        { key: 'a', label: 'A', status: 'unknown' },
+        { key: 'b', label: 'B', status: 'confirmed_web', answer: 'Step-free at west door', evidence: 'Use the west door.' },
+        { key: 'c', label: 'C', status: 'confirmed_venue', answer: 'Yes', evidence: 'Yes.' },
+      ],
+      [
+        { key: 'a', label: 'A', status: 'confirmed_web', answer: 'Step-free listed', evidence: 'Step-free listed.', sourceUrl: 'https://venue.example/access' },
+        { key: 'b', label: 'B', status: 'unknown', answer: null, evidence: null, sourceUrl: null },
+        { key: 'c', label: 'C', status: 'unknown', answer: null, evidence: null, sourceUrl: null },
+      ],
+    )
+    assert.equal(changes.length, 2)
+    assert.equal(changes[0].kind, 'confirmed')
+    assert.equal(changes[1].kind, 'vanished')
+  })
+
+  it('flags changed web answers for review and ignores identical rows', () => {
+    const changes = diffRecheck(
+      [
+        { key: 'a', label: 'A', status: 'confirmed_web', answer: 'Same', evidence: 'Same.' },
+        { key: 'b', label: 'B', status: 'confirmed_web', answer: 'Old', evidence: 'Old.' },
+      ],
+      [
+        { key: 'a', label: 'A', status: 'confirmed_web', answer: 'Same', evidence: 'Same.', sourceUrl: null },
+        { key: 'b', label: 'B', status: 'confirmed_web', answer: 'New', evidence: 'New.', sourceUrl: null },
+      ],
+    )
+    assert.equal(changes.length, 1)
+    assert.equal(changes[0].kind, 'changed')
   })
 })

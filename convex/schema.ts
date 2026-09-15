@@ -29,6 +29,16 @@ export default defineSchema({
     // Legacy cases without a token remain readable for backwards compat,
     // but all mutations require a match when a token is present.
     ownerToken: v.optional(v.string()),
+    // Public read-only share link token. Minted at creation for new cases;
+    // older cases mint one on demand via ensureShareToken.
+    shareToken: v.optional(v.string()),
+    // Opt-in owner email for completion / reply / recheck notifications.
+    ownerEmail: v.optional(v.string()),
+    // Re-verification loop state.
+    recheckEnabled: v.optional(v.boolean()),
+    lastRecheckAt: v.optional(v.number()),
+    // Evidence screenshot of the venue page, stored in Convex file storage.
+    screenshotId: v.optional(v.id('_storage')),
     attemptCount: v.optional(v.number()),
     researchSources: v.optional(
       v.array(v.object({ url: v.string(), chars: v.number() })),
@@ -38,7 +48,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_createdAt', ['createdAt'])
-    .index('by_userId', ['userId']),
+    .index('by_userId', ['userId'])
+    .index('by_shareToken', ['shareToken']),
 
   requirements: defineTable({
     caseId: v.id('cases'),

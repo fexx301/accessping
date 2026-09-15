@@ -3,7 +3,7 @@ import { useAction, useMutation, useQuery } from 'convex/react'
 import { useConvexAuth } from '@convex-dev/auth/react'
 import { api } from '../convex/_generated/api'
 import type { Id } from '../convex/_generated/dataModel'
-import { MAX_SENDS_PER_CASE } from '../convex/guards'
+import { isValidEmail, MAX_SENDS_PER_CASE } from '../convex/guards'
 import './App.css'
 
 type RequirementStatus =
@@ -191,6 +191,7 @@ function App() {
   const searchParams = new URLSearchParams(window.location.search)
   const previewMode = searchParams.get('preview') === '1'
   const deepLinkedCase = searchParams.get('case') as Id<'cases'> | null
+  const sharedToken = searchParams.get('share')
   const { isAuthenticated } = useConvexAuth()
 
   const [url, setUrl] = useState(previewMode ? 'https://example.com/accessibility' : '')
@@ -212,6 +213,9 @@ function App() {
   const [isSyncing, setIsSyncing] = useState(false)
   const [shareMessage, setShareMessage] = useState<string | null>(null)
   const [historyError, setHistoryError] = useState<string | null>(null)
+  const [ownerEmail, setOwnerEmail] = useState('')
+  const [emailTouched, setEmailTouched] = useState(false)
+  const [isSharing, setIsSharing] = useState(false)
   const reportStatusRef = useRef<HTMLDivElement>(null)
   const hydratedCaseRef = useRef<string | null>(null)
 
@@ -219,6 +223,7 @@ function App() {
   const setPriority = useMutation(api.cases.setPriority)
   const resetForRetry = useMutation(api.cases.resetForRetry)
   const removeCase = useMutation(api.cases.remove)
+  const ensureShareToken = useMutation(api.cases.ensureShareToken)
   const analyzeVenue = useAction(api.research.analyzeVenue)
   const sendInquiry = useAction(api.outreach.sendInquiry)
   const syncLatestReply = useAction(api.outreach.syncLatestReply)
@@ -227,6 +232,10 @@ function App() {
   const bundle = useQuery(
     api.cases.getBundle,
     caseId ? { caseId, ownerToken } : 'skip',
+  )
+  const screenshotUrl = useQuery(
+    api.cases.getScreenshotUrl,
+    caseId && bundle?.case.screenshotId ? { caseId, ownerToken } : 'skip',
   )
   const historyRefs: OwnedCaseRef[] = historyOrder
     .map((id) => ({ caseId: id as Id<'cases'>, ownerToken: ownerTokens[id] }))
@@ -275,6 +284,14 @@ function App() {
         ? 'Use a complete http:// or https:// venue or event URL.'
         : null
 
+  const trimmedEmail = ownerEmail.trim()
+  const emailError =
+    !emailTouched || trimmedEmail.length === 0
+      ? null
+      : !isValidEmail(trimmedEmail)
+        ? 'Enter a valid email for updates, or leave it blank.'
+        : null
+
   function persistOwnership(nextCaseId: Id<'cases'>, token: string) {
     const nextTokens = { ...readTokenMap(), [nextCaseId]: token }
     writeTokenMap(nextTokens)
@@ -307,8 +324,9 @@ function App() {
     event.preventDefault()
     if (previewMode) return
     setUrlTouched(true)
+    setEmailTouched(true)
 
-    if (!urlIsValid || isStarting) return
+    if (!urlIsValid || emailError || isStarting) return
 
     setSubmitError(null)
     setQuestionsOpen(false)
@@ -316,7 +334,12 @@ function App() {
 
     const token = newOwnerToken()
     try {
-      const result = await createCase({ url: normalizedUrl, priorityKeys: selectedNeeds, ownerToken: token })
+      const result = await createCase({
+        url: normalizedUrl,
+        priorityKeys: selectedNeeds,
+        ownerToken: token,
+        ownerEmail: trimmedEmail || undefined,
+      })
       const nextCaseId = result.caseId
       persistOwnership(nextCaseId, token)
       setCaseId(nextCaseId)
@@ -471,6 +494,22 @@ function App() {
     URL.revokeObjectURL(href)
   }
 
+  async function handleShareLink() {
+    if (!caseId || previewMode || isSharing) return
+    setShareMessage(null)
+    setIsSharing(true)
+    try {
+      const token = bundle?.case.shareToken ?? (await ensureShareToken({ caseId, ownerToken })).shareToken
+      const shareUrl = `${window.location.origin}${window.location.pathname}?share=${token}`
+      await navigator.clipboard.writeText(shareUrl)
+      setShareMessage('Share link copied. Anyone with the link can view this check read-only.')
+    } catch {
+      setShareMessage('Could not create the share link. Try again.')
+    } finally {
+      setIsSharing(false)
+    }
+  }
+
   const caseStatus = previewMode ? 'ready' : bundle?.case.status
   const ownershipBlocked = !previewMode && !!caseId && !!deepLinkedCase && caseId === deepLinkedCase && !ownerToken && bundle === null
   const statusHeadline = previewMode
@@ -536,6 +575,10 @@ function App() {
     (outreachStatus === 'replied' && !canResend)
   const showFollowup = caseStatus === 'ready' && unknownCount > 0 && !ownershipBlocked
 
+  if (sharedToken && !previewMode) {
+    return <SharedLedger shareToken={sharedToken} />
+  }
+
   return (
     <main className="app-shell">
       <a className="skip-link" href="#report-title">
@@ -599,6 +642,29 @@ function App() {
                 {previewMode
                   ? 'Synthetic preview only. Live venue checks are disabled on this QA route.'
                   : urlError ?? 'Published evidence stays separate from assumptions.'}
+              </p>
+            </div>
+
+            <div className="url-field">
+              <label htmlFor="owner-email">Email for updates (optional)</label>
+              <input
+                id="owner-email"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                placeholder="you@example.org"
+                value={ownerEmail}
+                onChange={(event) => setOwnerEmail(event.target.value)}
+                onBlur={() => setEmailTouched(true)}
+                aria-invalid={emailError ? 'true' : 'false'}
+                aria-describedby="owner-email-help"
+                disabled={previewMode}
+              />
+              <p className="form-helper" id="owner-email-help">
+                {previewMode
+                  ? 'No emails are sent from the preview.'
+                  : (emailError ??
+                    'Get emailed when the review lands, a venue replies, or a weekly re-check finds changes.')}
               </p>
             </div>
 
@@ -685,6 +751,14 @@ function App() {
               ) : bundle?.case.url ? (
                 <p className="report-url">{bundle.case.url}</p>
               ) : null}
+              {!previewMode && screenshotUrl && (
+                <figure className="report-screenshot">
+                  <a href={screenshotUrl} target="_blank" rel="noreferrer">
+                    <img src={screenshotUrl} alt={`Screenshot of ${bundle?.case.url ?? 'the venue page'} as researched`} loading="lazy" />
+                  </a>
+                  <figcaption>Venue page snapshot · re-checked weekly</figcaption>
+                </figure>
+              )}
               {bundle?.case.researchSources && bundle.case.researchSources.length > 0 && (
                 <details className="report-sources">
                   <summary>
@@ -750,6 +824,16 @@ function App() {
               <button type="button" className="share-action" onClick={() => void handleCopyLink()}>
                 Copy link
               </button>
+              {!previewMode && (
+                <button
+                  type="button"
+                  className="share-action"
+                  onClick={() => void handleShareLink()}
+                  disabled={isSharing}
+                >
+                  {isSharing ? 'Creating…' : 'Share page'}
+                </button>
+              )}
               <button type="button" className="share-action" onClick={handleCopySummary}>
                 Copy summary
               </button>
@@ -981,6 +1065,163 @@ function App() {
           {caseStatus === 'ready' && unknownCount === 0 && (
             <div className="completion-note">All six access details have supporting answers in this case.</div>
           )}
+        </section>
+      </div>
+    </main>
+  )
+}
+
+function SharedLedger({ shareToken }: { shareToken: string }) {
+  const shared = useQuery(api.cases.getSharedBundle, { shareToken })
+  const screenshot = useQuery(
+    api.cases.getScreenshotUrl,
+    shared?.case.screenshotId ? { caseId: shared.case._id, shareToken } : 'skip',
+  )
+
+  const requirements = (shared?.requirements ?? []).map((item) => ({
+    ...item,
+    _id: item._id as string,
+    status: item.status as RequirementStatus,
+  }))
+  const confirmed = requirements.filter(
+    (r) => r.status === 'confirmed_web' || r.status === 'confirmed_venue',
+  ).length
+  const unknown = requirements.filter((r) => r.status === 'unknown').length
+  const conflicting = requirements.filter((r) => r.status === 'conflicting').length
+
+  return (
+    <main className="app-shell">
+      <a className="skip-link" href="#report-title">
+        Skip to access ledger
+      </a>
+      <header className="topbar">
+        <span className="brand" aria-label="AccessPing shared check">
+          <span className="brand-wordmark" aria-hidden="true">
+            <span className="brand-wordmark__access">Access</span>
+            <span className="brand-wordmark__ping">Ping</span>
+          </span>
+        </span>
+        <p className="product-note">Shared read-only access check</p>
+      </header>
+
+      <div className="workbench" id="top">
+        <section className="report-panel" aria-labelledby="report-title">
+          <header className="report-head">
+            <div className="report-head__copy">
+              <p className="report-label">Shared access ledger</p>
+              <h2 id="report-title">
+                {shared ? (shared.case.venueName || 'Source review complete') : 'Loading shared check…'}
+              </h2>
+              <div className="report-status" aria-live="polite" aria-atomic="true">
+                <p>
+                  {shared === undefined
+                    ? 'Loading the shared evidence…'
+                    : shared === null
+                      ? 'This share link is invalid or the check is no longer available.'
+                      : `${confirmed} confirmed · ${unknown} unverified · ${conflicting} conflicting`}
+                </p>
+              </div>
+              {shared?.case.url && <p className="report-url">{shared.case.url}</p>}
+              {screenshot && (
+                <figure className="report-screenshot">
+                  <a href={screenshot} target="_blank" rel="noreferrer">
+                    <img
+                      src={screenshot}
+                      alt={`Screenshot of ${shared?.case.url ?? 'the venue page'} as researched`}
+                      loading="lazy"
+                    />
+                  </a>
+                  <figcaption>Venue page snapshot</figcaption>
+                </figure>
+              )}
+              {shared && shared.case.researchSources && shared.case.researchSources.length > 0 && (
+                <details className="report-sources">
+                  <summary>
+                    Researched {shared.case.researchSources.length} page
+                    {shared.case.researchSources.length === 1 ? '' : 's'}
+                    {shared.case.researchModel ? ` · ${shared.case.researchModel}` : ''}
+                  </summary>
+                  <ul>
+                    {shared.case.researchSources.map((source) => (
+                      <li key={source.url}>
+                        <a href={source.url} target="_blank" rel="noreferrer">
+                          {sourceLabel(source.url)}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          </header>
+
+          <div className="ledger-note">
+            <p>
+              Unverified means the source did not state it — not that it is unavailable. Shared by
+              the check owner; evidence as researched.
+            </p>
+          </div>
+
+          <div className="ledger-head" aria-hidden="true">
+            <span>Access detail</span>
+            <span>Evidence state</span>
+            <span>Source</span>
+          </div>
+
+          <div className="report-body">
+            <ul className="requirement-list">
+              {requirements.map((item) => {
+                const domain = sourceDomain(item.sourceUrl)
+                return (
+                  <li className="requirement-row" key={item._id}>
+                    <div className="requirement-row__detail">
+                      <div className="requirement-row__name">
+                        <h3>{item.label}</h3>
+                      </div>
+                      {item.answer ? (
+                        <p className="answer">{item.answer}</p>
+                      ) : (
+                        <p className="requirement-row__note">
+                          No supported answer found in the source.
+                        </p>
+                      )}
+                      {item.evidence && (
+                        <div className="evidence">
+                          <p className="evidence__label">
+                            {item.status === 'confirmed_venue'
+                              ? 'Venue reply evidence'
+                              : item.status === 'conflicting'
+                                ? 'Conflicting evidence — needs review'
+                                : 'Source evidence'}
+                            {domain ? ` · ${domain}` : ''}
+                          </p>
+                          <blockquote>
+                            <p>{item.evidence}</p>
+                          </blockquote>
+                        </div>
+                      )}
+                    </div>
+                    <div className={`requirement-row__state state-${item.status}`}>
+                      <span className={`status-dot status-dot--${item.status}`} aria-hidden="true" />
+                      <span>{statusCopy[item.status]}</span>
+                    </div>
+                    <div className="requirement-row__source">
+                      {item.sourceUrl ? (
+                        <a href={item.sourceUrl} target="_blank" rel="noreferrer">
+                          <span>{domain}</span>
+                          <span aria-hidden="true">↗</span>
+                        </a>
+                      ) : item.status === 'confirmed_venue' ? (
+                        <span className="source-empty">Venue reply</span>
+                      ) : (
+                        <span className="source-empty">No source</span>
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
         </section>
       </div>
     </main>

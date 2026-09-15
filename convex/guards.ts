@@ -55,6 +55,73 @@ export function classifyReplyUpdate(priorStatus: PriorStatus): 'confirm' | 'conf
   return 'conflict'
 }
 
+export type RecheckRow = {
+  key: string
+  label: string
+  status: PriorStatus
+  answer?: string
+  evidence?: string
+  sourceUrl?: string
+}
+
+export type FreshRow = {
+  key: string
+  label: string
+  status: 'confirmed_web' | 'unknown' | 'conflicting'
+  answer: string | null
+  evidence: string | null
+  sourceUrl: string | null
+}
+
+export type RecheckChange =
+  | { key: string; label: string; kind: 'confirmed'; answer: string; evidence: string; sourceUrl?: string }
+  | { key: string; label: string; kind: 'vanished'; priorAnswer?: string }
+  | { key: string; label: string; kind: 'changed'; answer: string; evidence: string; sourceUrl?: string }
+
+function sameText(a?: string | null, b?: string | null): boolean {
+  return (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase()
+}
+
+// Diff a fresh re-verification pass against stored rows. Venue-confirmed
+// rows are ground truth and never touched by rechecks.
+export function diffRecheck(prior: RecheckRow[], fresh: FreshRow[]): RecheckChange[] {
+  const freshByKey = new Map(fresh.map((row) => [row.key, row]))
+  const changes: RecheckChange[] = []
+  for (const row of prior) {
+    if (row.status === 'confirmed_venue') continue
+    const next = freshByKey.get(row.key)
+    if (!next) continue
+    if (row.status === 'unknown' && next.status !== 'unknown' && next.answer && next.evidence) {
+      changes.push({
+        key: row.key,
+        label: row.label,
+        kind: 'confirmed',
+        answer: next.answer,
+        evidence: next.evidence,
+        sourceUrl: next.sourceUrl ?? undefined,
+      })
+    } else if (row.status !== 'unknown' && next.status === 'unknown') {
+      changes.push({ key: row.key, label: row.label, kind: 'vanished', priorAnswer: row.answer })
+    } else if (
+      row.status !== 'unknown' &&
+      next.status !== 'unknown' &&
+      next.answer &&
+      next.evidence &&
+      (!sameText(row.answer, next.answer) || !sameText(row.evidence, next.evidence))
+    ) {
+      changes.push({
+        key: row.key,
+        label: row.label,
+        kind: 'changed',
+        answer: next.answer,
+        evidence: next.evidence,
+        sourceUrl: next.sourceUrl ?? undefined,
+      })
+    }
+  }
+  return changes
+}
+
 // Signals that a discovered URL likely carries accessibility evidence.
 export const ACCESS_KEYWORDS = [
   'access',

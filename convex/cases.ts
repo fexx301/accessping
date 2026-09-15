@@ -1,6 +1,6 @@
 import { v } from 'convex/values'
-import { internalMutation, mutation, query } from './_generated/server'
-import { MAX_CASES_PER_HOUR, normalizeUrl } from './guards'
+import { internalMutation, internalQuery, mutation, query } from './_generated/server'
+import { isValidEmail, MAX_CASES_PER_HOUR, normalizeUrl } from './guards'
 
 const requirementTemplate = [
   ['step_free_entrance', 'Step-free entrance'],
@@ -49,11 +49,16 @@ export const create = mutation({
     url: v.string(),
     priorityKeys: v.array(v.string()),
     ownerToken: v.string(),
+    ownerEmail: v.optional(v.string()),
   },
-  handler: async (ctx, { url, priorityKeys, ownerToken }) => {
+  handler: async (ctx, { url, priorityKeys, ownerToken, ownerEmail }) => {
     const cleanUrl = assertValidUrl(url)
     if (ownerToken.trim().length < 16) {
       throw new Error('Missing case ownership token. Reload and try again.')
+    }
+    const cleanEmail = ownerEmail?.trim().toLowerCase() || undefined
+    if (cleanEmail && !isValidEmail(cleanEmail)) {
+      throw new Error('Enter a valid email address for updates, or leave it blank.')
     }
 
     // Light global abuse brake: at most 60 cases created in the last hour.
@@ -75,6 +80,9 @@ export const create = mutation({
       status: 'queued',
       ownerToken,
       userId: userId ?? undefined,
+      shareToken: crypto.randomUUID().replace(/-/g, ''),
+      ownerEmail: cleanEmail,
+      recheckEnabled: true,
       attemptCount: 0,
       createdAt: now,
       updatedAt: now,
@@ -259,6 +267,90 @@ export const myCases = query({
       status: c.status,
       createdAt: c.createdAt,
     }))
+  },
+})
+
+// Mint a public share token for older cases that lack one. Owner-only.
+export const ensureShareToken = mutation({
+  args: { caseId: v.id('cases'), ownerToken: v.optional(v.string()) },
+  handler: async (ctx, { caseId, ownerToken }) => {
+    const caseRecord = await ctx.db.get(caseId)
+    assertOwner(caseRecord, await callerUserId(ctx), ownerToken)
+    if (!caseRecord) throw new Error('Case not found.')
+    if (caseRecord.shareToken) return { shareToken: caseRecord.shareToken }
+    const shareToken = crypto.randomUUID().replace(/-/g, '')
+    await ctx.db.patch(caseId, { shareToken, updatedAt: Date.now() })
+    return { shareToken }
+  },
+})
+
+// Public read-only bundle behind a share token. Exposes no owner email,
+// tokens, or outreach recipient — safe to open without an account.
+export const getSharedBundle = query({
+  args: { shareToken: v.string() },
+  handler: async (ctx, { shareToken }) => {
+    if (!shareToken) return null
+    const caseRecord = await ctx.db
+      .query('cases')
+      .withIndex('by_shareToken', (q) => q.eq('shareToken', shareToken))
+      .first()
+    if (!caseRecord || caseRecord.status === 'queued') return null
+
+    const requirements = await ctx.db
+      .query('requirements')
+      .withIndex('by_caseId', (q) => q.eq('caseId', caseRecord._id))
+      .take(20)
+
+    return {
+      case: {
+        _id: caseRecord._id,
+        url: caseRecord.url,
+        venueName: caseRecord.venueName,
+        status: caseRecord.status,
+        createdAt: caseRecord.createdAt,
+        researchSources: caseRecord.researchSources,
+        researchModel: caseRecord.researchModel,
+        screenshotId: caseRecord.screenshotId,
+      },
+      requirements: requirements.map((r) => ({
+        _id: r._id,
+        key: r.key,
+        label: r.label,
+        status: r.status,
+        answer: r.answer,
+        evidence: r.evidence,
+        sourceUrl: r.sourceUrl,
+      })),
+    }
+  },
+})
+
+// File-storage URL for a case screenshot. Reachable by owners and by anyone
+// holding the share token.
+export const getScreenshotUrl = query({
+  args: {
+    caseId: v.id('cases'),
+    ownerToken: v.optional(v.string()),
+    shareToken: v.optional(v.string()),
+  },
+  handler: async (ctx, { caseId, ownerToken, shareToken }) => {
+    const caseRecord = await ctx.db.get(caseId)
+    if (!caseRecord || !caseRecord.screenshotId) return null
+    if (shareToken && caseRecord.shareToken === shareToken) {
+      return ctx.storage.getUrl(caseRecord.screenshotId)
+    }
+    if (!hasAccess(caseRecord, await callerUserId(ctx), ownerToken)) return null
+    return ctx.storage.getUrl(caseRecord.screenshotId)
+  },
+})
+
+// Minimal owner-contact context for opt-in notifications.
+export const getNotifyContext = internalQuery({
+  args: { caseId: v.id('cases') },
+  handler: async (ctx, { caseId }) => {
+    const c = await ctx.db.get(caseId)
+    if (!c) return null
+    return { ownerEmail: c.ownerEmail, venueName: c.venueName, url: c.url }
   },
 })
 

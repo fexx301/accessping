@@ -10,11 +10,13 @@
 
 import type * as auth from "../auth.js";
 import type * as cases from "../cases.js";
+import type * as crons from "../crons.js";
 import type * as emailCallbacks from "../emailCallbacks.js";
 import type * as guards from "../guards.js";
 import type * as http from "../http.js";
 import type * as outreach from "../outreach.js";
 import type * as outreachNode from "../outreachNode.js";
+import type * as recheck from "../recheck.js";
 import type * as research from "../research.js";
 import type * as researchNode from "../researchNode.js";
 
@@ -27,11 +29,13 @@ import type {
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   cases: typeof cases;
+  crons: typeof crons;
   emailCallbacks: typeof emailCallbacks;
   guards: typeof guards;
   http: typeof http;
   outreach: typeof outreach;
   outreachNode: typeof outreachNode;
+  recheck: typeof recheck;
   research: typeof research;
   researchNode: typeof researchNode;
 }>;
